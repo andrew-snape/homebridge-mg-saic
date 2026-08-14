@@ -189,7 +189,7 @@ export class SaicClient {
     const failureType = json.data?.failureType ?? json.failureType;
 
     this.log.debug(
-      `[${method} ${path}] code=${code} event-id=${respEventId ?? '-'} data=${json.data !== undefined ? 'yes' : 'no'}` +
+      `[${method} ${path}] code=${code} event-id=${respEventId ?? '-'} data=${json.data !== undefined ? 'yes' : 'no'} message=${message}` +
       (failureType !== undefined ? ` failureType=${failureType}` : ''),
     );
 
