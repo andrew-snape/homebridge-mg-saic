@@ -1,5 +1,6 @@
 {
   "name": "homebridge-mg-saic",
+  "displayName": "MG SAIC",
   "version": "0.2.0",
   "description": "Homebridge plugin for HomeKit control of an MG EV via the SAIC iSmart cloud API.",
   "type": "module",
@@ -22,8 +23,8 @@
   },
   "homepage": "https://github.com/andrew-snape/homebridge-mg-saic#readme",
   "engines": {
-    "node": ">=18.0.0",
-    "homebridge": ">=1.8.0"
+    "node": ">=18.20.0",
+    "homebridge": "^1.8.0 || ^2.0.0"
   },
   "files": [
     "src",

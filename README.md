@@ -1,5 +1,9 @@
 # homebridge-mg-saic
 
+[![npm version](https://img.shields.io/npm/v/homebridge-mg-saic.svg)](https://www.npmjs.com/package/homebridge-mg-saic)
+[![npm downloads](https://img.shields.io/npm/dt/homebridge-mg-saic.svg)](https://www.npmjs.com/package/homebridge-mg-saic)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 HomeKit control of a single MG EV (built and tested against an MG4) via the SAIC iSmart cloud API.
 
 This is an unofficial, reverse-engineered integration. It isn't affiliated with, endorsed by, or supported by SAIC Motor or MG. It talks to the same undocumented cloud API used by the iSmart phone app, which can change or break without notice. Use it at your own risk, and see [`docs/API.md`](docs/API.md) for the full reverse-engineered API reference this plugin is built on.
@@ -26,22 +30,17 @@ Built for a single-vehicle account. If your account has more than one vehicle, s
 
 ## Installation
 
-Not yet published to npm. Install from a local clone or a Git checkout:
+Published on npm. Install through Homebridge's Config UI X (search "MG SAIC" or "homebridge-mg-saic" under Plugins), or from the command line inside your Homebridge instance:
 
 ```bash
-cd /path/to/your/homebridge/config
-npm install /path/to/homebridge-mg-saic
+npm install -g homebridge-mg-saic
 ```
 
-Or install directly from a Git URL once this is pushed to GitHub:
-
-```bash
-npm install github:<your-username>/homebridge-mg-saic
-```
+(drop `-g` and run it from your Homebridge storage directory instead if you're managing plugins locally rather than globally, e.g. inside a Docker-based Homebridge install).
 
 ## Configuration
 
-Via Homebridge Config UI X (the plugin ships a `config.schema.json`), or directly in `config.json`:
+Via Homebridge Config UI X (the plugin ships a `config.schema.json`, which drives the settings form there), or directly in `config.json`:
 
 ```json
 {
@@ -73,8 +72,14 @@ See [`TESTING.md`](TESTING.md) for a staged approach: verify the API client stan
 
 ## Status
 
-Lock/unlock is wired up but not yet confirmed against real hardware, see the warning above and `TESTING.md`. Pre-conditioning start is not yet implemented.
+Running in production against a real MG4 for read-only status: battery, lock state, doors, boot, bonnet, and charging. Lock/unlock is wired up but not yet confirmed against real hardware, see the warning above and `TESTING.md`. Pre-conditioning start is not yet implemented.
+
+Not yet submitted for [Homebridge plugin verification](https://github.com/homebridge/plugins/wiki/Verified-Plugins), deliberately: lock/unlock needs to be confirmed working against real hardware first, see `TESTING.md`. See `CHANGELOG.md` for release history.
+
+## Contributing
+
+Issues and pull requests are welcome. This project doesn't have a dedicated Discord or support channel, please use [GitHub Issues](https://github.com/andrew-snape/homebridge-mg-saic/issues) for bug reports and feature requests.
 
 ## License
 
-MIT
+MIT, see [`LICENSE`](LICENSE).
