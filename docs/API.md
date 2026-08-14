@@ -168,6 +168,66 @@ Body for unlocking the doors:
 
 The response echoes a fresh `basicVehicleStatus` (same shape as `/vehicle/status`) with the updated `lockStatus`, so a client can reflect the new state immediately rather than waiting for the next poll.
 
+## Heated seats, rear defrost, and window control
+
+Also ported from `saic-python-client-ng` (`api/vehicle/climate` and `api/vehicle/windows`), not derived from this project's own traffic capture. **Not yet confirmed against real hardware.**
+
+All three use the same `POST /vehicle/control` endpoint and async event-id pattern as lock/unlock.
+
+### Heated seats (`rvcReqType: "5"`)
+
+Both seats are set in a single request, there's no way to change one without also stating the other's level:
+
+```json
+{
+  "rvcReqType": "5",
+  "rvcParams": [
+    { "paramId": 17,  "paramValue": "<level>" },
+    { "paramId": 18,  "paramValue": "<level>" },
+    { "paramId": 255, "paramValue": "AAAAAA==" }
+  ],
+  "vin": "<sha256 hex of VIN>"
+}
+```
+
+`paramValue` for 17 and 18 is base64 of a single level byte, 0 = off, the reference client supports up to 3 (this plugin only ever sends 0 or 3). The reference client calls param 17 "driver" and 18 "passenger", but this project's own captured `/vehicle/status` response uses positional field names instead, `frontLeftSeatHeatLevel` and `frontRightSeatHeatLevel`. Which of 17/18 corresponds to which physical seat, and whether that's consistent across left- and right-hand-drive markets, is **not confirmed**. Test one side at a time and watch which actual seat heats up.
+
+### Rear window defrost (`rvcReqType: "32"`)
+
+```json
+{
+  "rvcReqType": "32",
+  "rvcParams": [
+    { "paramId": 23,  "paramValue": "<0 or 1>" },
+    { "paramId": 255, "paramValue": "AAAAAA==" }
+  ],
+  "vin": "<sha256 hex of VIN>"
+}
+```
+
+Status is readable back from `basicVehicleStatus.rmtHtdRrWndSt` in `/vehicle/status`.
+
+### Windows (`rvcReqType: "3"`)
+
+Every window is named in a single request, whichever ones are marked "requested" (`0x01`) get the open/close command in param 13, the rest (`0x00`) are left alone:
+
+```json
+{
+  "rvcReqType": "3",
+  "rvcParams": [
+    { "paramId": 8,  "paramValue": "<0 or 1>" },
+    { "paramId": 9,  "paramValue": "<0 or 1>" },
+    { "paramId": 10, "paramValue": "<0 or 1>" },
+    { "paramId": 11, "paramValue": "<0 or 1>" },
+    { "paramId": 12, "paramValue": "<0 or 1>" },
+    { "paramId": 13, "paramValue": "<3 = open, 0 = close>" }
+  ],
+  "vin": "<sha256 hex of VIN>"
+}
+```
+
+Param 8 = sunroof, 9 = driver's window. Both of those are unambiguous, the reference client and this project's own status field names agree on "driver". Params 10, 11, 12 are this project's best guess at passenger/rear-left/rear-right, inferred from field declaration order in both the reference client's enum and this project's captured status response (`driverWindow`, `passengerWindow`, `rearLeftWindow`, `rearRightWindow`), but **not confirmed against real hardware**. Test the driver's window first; if the others move the wrong window, the fix is a one-line change to `WINDOW_ID` in `src/saic-client.js`.
+
 ## Rate limiting
 
 Poll conservatively. The Home Assistant integration deliberately throttles to avoid SAIC locking the account, and community reports mention the gateway pausing activity for 900 seconds when it detects a login from another device. A 15 minute poll interval is a sane default, with a manual refresh action for on-demand updates.
@@ -183,12 +243,14 @@ Field names as returned by the API, decoded meaning based on a live capture:
 | `lockStatus` | `1` = locked, `0` = unlocked |
 | `driverDoor`, `passengerDoor`, `rearLeftDoor`, `rearRightDoor` | `0` = closed, non-zero = open |
 | `bootStatus`, `bonnetStatus` | `0` = closed, non-zero = open |
-| `driverWindow`, `passengerWindow`, `rearLeftWindow`, `rearRightWindow` | `0` = closed |
 | `engineStatus` | `0` = off |
-| `remoteClimateStatus` | `0` = off |
+| `remoteClimateStatus` | `0` = off. Read-only pre-conditioning status, not yet writable |
 | `interiorTemperature`, `exteriorTemperature` | Degrees Celsius. Drives the two `TemperatureSensor` services. Occasionally seen returning -128 elsewhere in this response (tyre pressure fields) when a value isn't ready, so a client should treat implausible readings as unavailable rather than trusting them outright |
 | `mileage` | Tenths of a km |
 | `vehicleAlarmStatus` | Meaning not yet confirmed |
+| `frontLeftSeatHeatLevel`, `frontRightSeatHeatLevel` | `0` = off, drives the two heated seat Switches (off by default, unverified) |
+| `rmtHtdRrWndSt` | `0` = off, drives the rear defrost Switch (off by default, unverified) |
+| `driverWindow`, `passengerWindow`, `rearLeftWindow`, `rearRightWindow` | `0` = closed, drives the four window Switches (off by default, unverified) |
 
 ### `chrgMgmtData` (from `/vehicle/charging/mgmtData`)
 

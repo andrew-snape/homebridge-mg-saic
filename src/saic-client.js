@@ -288,9 +288,62 @@ export class SaicClient {
   openTailgate(vin) {
     return this.unlockVehicle(vin, LOCK_ID.TAILGATE);
   }
+
+  // -------------------------------------------------------- climate control
+  //
+  // Ported from saic_ismart_client_ng.api.vehicle.climate. rvcReqType "5" sets heated seat
+  // levels for both seats in one request (paramId 17 = left, 18 = right; note the reference
+  // client's own docs call these "driver"/"passenger", but the actual status fields returned
+  // by /vehicle/status are positional - frontLeftSeatHeatLevel / frontRightSeatHeatLevel - so
+  // this client uses left/right throughout to sidestep the LHD/RHD ambiguity of "driver").
+  // rvcReqType "32" is the separate rear window defrost command (paramId 23, one byte on/off).
+  // NOT yet confirmed against real hardware - see the plugin's TESTING.md.
+
+  /** level is 0-3 per the reference client (0 = off); this plugin only ever sends 0 or 3. */
+  controlHeatedSeats(vin, { leftLevel = 0, rightLevel = 0 } = {}) {
+    return this.vehicleControl(vin, {
+      rvcReqType: '5',
+      rvcParams: [
+        { paramId: 17, paramValue: b64([leftLevel]) },
+        { paramId: 18, paramValue: b64([rightLevel]) },
+        { paramId: 255, paramValue: b64([0, 0, 0, 0]) },
+      ],
+    });
+  }
+
+  controlRearWindowHeat(vin, enable) {
+    return this.vehicleControl(vin, {
+      rvcReqType: '32',
+      rvcParams: [
+        { paramId: 23, paramValue: b64([enable ? 1 : 0]) },
+        { paramId: 255, paramValue: b64([0, 0, 0, 0]) },
+      ],
+    });
+  }
+
+  // ---------------------------------------------------------- window control
+  //
+  // Ported from saic_ismart_client_ng.api.vehicle.windows. rvcReqType "3" names every window in
+  // one request (which ones are "requested", paramId 8/9/10/11/12) plus a single open/close flag
+  // (paramId 13, 3 = open, 0 = close) that applies to whichever windows were marked requested.
+  //
+  // WINDOW_ID.DRIVER is unambiguous (both the reference client and this project's own captured
+  // /vehicle/status response call it "driver"). WINDOW_2/3/4 are this project's best guess at
+  // passenger/rear-left/rear-right, inferred from field declaration order, NOT confirmed. Test
+  // the driver window first; if the others move the wrong window, fix the mapping in
+  // WINDOW_ID below rather than in the accessory. NOT yet confirmed against real hardware.
+
+  controlWindow(vin, windowId, { open }) {
+    const allWindowIds = [WINDOW_ID.SUNROOF, WINDOW_ID.DRIVER, WINDOW_ID.WINDOW_2, WINDOW_ID.WINDOW_3, WINDOW_ID.WINDOW_4];
+    const rvcParams = allWindowIds.map((id) => ({ paramId: id, paramValue: b64([id === windowId ? 1 : 0]) }));
+    rvcParams.push({ paramId: 13, paramValue: b64([open ? 3 : 0]) });
+    return this.vehicleControl(vin, { rvcReqType: '3', rvcParams });
+  }
 }
 
 export const LOCK_ID = { TAILGATE: 2, DOORS: 3 };
+
+export const WINDOW_ID = { SUNROOF: 8, DRIVER: 9, WINDOW_2: 10, WINDOW_3: 11, WINDOW_4: 12 };
 
 function b64(bytes) {
   return Buffer.from(bytes).toString('base64');

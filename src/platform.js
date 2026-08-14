@@ -32,6 +32,11 @@ export class MgSaicPlatform {
     this.enablePreconditioning = config.enablePreconditioning ?? true;
     this.enableDoorSensors = config.enableDoorSensors ?? true;
     this.enableTemperatureSensors = config.enableTemperatureSensors ?? true;
+    // Off by default: these are new writable controls, not yet confirmed against real
+    // hardware (unlike lock/unlock). See TESTING.md before turning them on.
+    this.enableHeatedSeats = config.enableHeatedSeats ?? false;
+    this.enableRearDefrost = config.enableRearDefrost ?? false;
+    this.enableWindowControls = config.enableWindowControls ?? false;
     this.configuredVin = config.vin;
 
     this.client = new SaicClient(this.region, { log: this.log });
@@ -95,6 +100,9 @@ export class MgSaicPlatform {
       enablePreconditioning: this.enablePreconditioning,
       enableDoorSensors: this.enableDoorSensors,
       enableTemperatureSensors: this.enableTemperatureSensors,
+      enableHeatedSeats: this.enableHeatedSeats,
+      enableRearDefrost: this.enableRearDefrost,
+      enableWindowControls: this.enableWindowControls,
     });
   }
 

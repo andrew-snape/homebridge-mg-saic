@@ -127,7 +127,30 @@ Recommended order:
 
 If it works: the response from `/vehicle/control` includes a fresh `basicVehicleStatus`, which the plugin uses to update the lock tile immediately rather than waiting for the next poll, so you should see it settle within the same 20 to 30 second window the status/charging calls take when the car's asleep.
 
+## 5. Testing heated seats, rear defrost, and window control
+
+All three are off by default (`enableHeatedSeats`, `enableRearDefrost`, `enableWindowControls` in config) precisely because they haven't been tested yet. Enable them one at a time, same car-in-sight discipline as lock/unlock.
+
+### Heated seats
+
+Turn on **one side only** first. Physically check which seat actually warms up, don't assume the "Left seat heat" switch controls the seat on the left, the mapping between the API's param IDs and physical seats is inferred from field names, not confirmed (see `docs/API.md`). If it's backwards, that's a one-line fix in `src/accessory.js` (swap which field each switch reads/writes), not a deep bug.
+
+Then turn on the other side while the first is still on, and confirm the first side **stays on** rather than turning off, both seats are set together in a single API request, and the plugin is supposed to remember the other side's state rather than clobbering it. This was checked in a dry run against a fake HomeKit bridge, but it's worth eyes-on confirmation with the real seats.
+
+### Rear window defrost
+
+Straightforward on/off. Turn it on, confirm the rear windscreen's heating element actually engages (you should be able to feel warmth on the glass within a minute or two), turn it off, confirm it stops.
+
+### Windows
+
+**Test the driver's window first**, it's the one unambiguous mapping (paramId 9, matches the reference client and this project's own status field naming). Turn it on (open) and off (close) via the "Driver window" switch and confirm the correct window moves.
+
+Only after that works, test the other three one at a time; **the API request for "close driver window" explicitly tells the car to leave every other window alone**, so testing them individually should be safe, but confirm each one moves the window its name suggests before trusting the mapping. If "Passenger window" actually moves the rear-left window instead, for example, the fix is reordering the `WINDOW_ID` constants in `src/saic-client.js` to match reality, then updating `docs/API.md`.
+
+Windows are the least-confident mapping in this whole plugin, more caution here than anywhere else. Consider testing with the car stationary and unoccupied, and be ready for a window to end up somewhere unexpected the first time.
+
 ## Known gaps at this stage
 
 - Starting pre-conditioning is still read-only. It goes through `/vehicle/control` too, but with a different, unverified param set that hasn't been ported from the reference client yet.
+- Heated seats, rear defrost, and window control are coded and byte-verified against the reference client but not yet confirmed against real hardware, hence section 5 above.
 - Only tested against a single vehicle. If your account has more than one, set the `vin` config option to pin a specific one explicitly rather than relying on "first vehicle returned."

@@ -67,6 +67,24 @@
         "title": "Expose interior/exterior temperature sensors",
         "type": "boolean",
         "default": true
+      },
+      "enableHeatedSeats": {
+        "title": "Expose heated seat switches (left/right)",
+        "type": "boolean",
+        "default": false,
+        "description": "Not yet confirmed against real hardware. Test cautiously per TESTING.md before enabling."
+      },
+      "enableRearDefrost": {
+        "title": "Expose rear window defrost switch",
+        "type": "boolean",
+        "default": false,
+        "description": "Not yet confirmed against real hardware. Test cautiously per TESTING.md before enabling."
+      },
+      "enableWindowControls": {
+        "title": "Expose window open/close switches",
+        "type": "boolean",
+        "default": false,
+        "description": "Not yet confirmed against real hardware, and the window-to-switch mapping beyond the driver's window is inferred, not verified. Test cautiously per TESTING.md before enabling."
       }
     }
   }

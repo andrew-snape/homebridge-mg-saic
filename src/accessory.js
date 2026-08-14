@@ -24,15 +24,31 @@
  * services. The API has occasionally been seen to return -128 for fields
  * it can't report (see tyre pressure fields in a live capture), so both
  * readers treat implausible values as a fault rather than trusting them.
+ *
+ * Heated seats, rear defrost, and window control are all writable Switches,
+ * same as LockMechanism, but NOT yet confirmed against real hardware (unlike
+ * the lock). Off by default (enableHeatedSeats/enableRearDefrost/
+ * enableWindowControls all default to false) until tested - see TESTING.md.
+ * Seat heat is labelled by physical side (left/right) rather than
+ * driver/passenger, since the status API uses positional field names
+ * (frontLeftSeatHeatLevel) while the reference client's own naming is
+ * functional (driver/passenger) - conflating the two would risk labelling
+ * the wrong seat depending on market. Window mapping beyond the driver's
+ * window is inferred, not confirmed, see the comment in saic-client.js.
  */
+
+import { WINDOW_ID } from './saic-client.js';
 
 export class MgSaicAccessory {
   /**
    * @param {import('homebridge').PlatformAccessory} accessory
    * @param {import('./saic-client.js').SaicClient} client
-   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean, enableTemperatureSensors: boolean }} opts
+   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean, enableTemperatureSensors: boolean, enableHeatedSeats: boolean, enableRearDefrost: boolean, enableWindowControls: boolean }} opts
    */
-  constructor(accessory, client, { vin, log, api, enablePreconditioning, enableDoorSensors, enableTemperatureSensors }) {
+  constructor(accessory, client, {
+    vin, log, api, enablePreconditioning, enableDoorSensors, enableTemperatureSensors,
+    enableHeatedSeats, enableRearDefrost, enableWindowControls,
+  }) {
     this.accessory = accessory;
     this.client = client;
     this.vin = vin;
@@ -44,6 +60,9 @@ export class MgSaicAccessory {
     this.enablePreconditioning = enablePreconditioning;
     this.enableDoorSensors = enableDoorSensors;
     this.enableTemperatureSensors = enableTemperatureSensors;
+    this.enableHeatedSeats = enableHeatedSeats;
+    this.enableRearDefrost = enableRearDefrost;
+    this.enableWindowControls = enableWindowControls;
 
     this.setupInfoService();
     this.setupBatteryService();
@@ -52,6 +71,9 @@ export class MgSaicAccessory {
     if (this.enablePreconditioning) this.setupPreconditioningSwitch();
     if (this.enableDoorSensors) this.setupContactSensors();
     if (this.enableTemperatureSensors) this.setupTemperatureSensors();
+    if (this.enableHeatedSeats) this.setupHeatedSeatSwitches();
+    if (this.enableRearDefrost) this.setupRearDefrostSwitch();
+    if (this.enableWindowControls) this.setupWindowSwitches();
 
     // Cached latest reads, so a slow poll of one endpoint doesn't block
     // characteristic reads for data from the other endpoint.
@@ -158,6 +180,45 @@ export class MgSaicAccessory {
       .onGet(() => this.readTemperatureFault('exteriorTemperature'));
   }
 
+  setupHeatedSeatSwitches() {
+    this.leftSeatHeatService = this.accessory.getService('Left seat heat')
+      ?? this.accessory.addService(this.Service.Switch, 'Left seat heat', 'leftSeatHeat');
+    this.leftSeatHeatService.getCharacteristic(this.Characteristic.On)
+      .onGet(() => this.readSeatHeat('frontLeftSeatHeatLevel'))
+      .onSet((value) => this.setSeatHeat('left', value));
+
+    this.rightSeatHeatService = this.accessory.getService('Right seat heat')
+      ?? this.accessory.addService(this.Service.Switch, 'Right seat heat', 'rightSeatHeat');
+    this.rightSeatHeatService.getCharacteristic(this.Characteristic.On)
+      .onGet(() => this.readSeatHeat('frontRightSeatHeatLevel'))
+      .onSet((value) => this.setSeatHeat('right', value));
+  }
+
+  setupRearDefrostSwitch() {
+    this.rearDefrostService = this.accessory.getService('Rear window defrost')
+      ?? this.accessory.addService(this.Service.Switch, 'Rear window defrost', 'rearDefrost');
+    this.rearDefrostService.getCharacteristic(this.Characteristic.On)
+      .onGet(() => Boolean(this._lastStatus?.basicVehicleStatus?.rmtHtdRrWndSt))
+      .onSet((value) => this.setRearDefrost(value));
+  }
+
+  setupWindowSwitches() {
+    const windows = [
+      ['Driver window', 'driverWindow', WINDOW_ID.DRIVER],
+      ['Passenger window', 'passengerWindow', WINDOW_ID.WINDOW_2],
+      ['Rear left window', 'rearLeftWindow', WINDOW_ID.WINDOW_3],
+      ['Rear right window', 'rearRightWindow', WINDOW_ID.WINDOW_4],
+    ];
+    this.windowServices = windows.map(([name, field, windowId]) => {
+      const service = this.accessory.getService(name)
+        ?? this.accessory.addService(this.Service.Switch, name, field);
+      service.getCharacteristic(this.Characteristic.On)
+        .onGet(() => Boolean(this._lastStatus?.basicVehicleStatus?.[field]))
+        .onSet((value) => this.setWindow(field, windowId, value));
+      return service;
+    });
+  }
+
   // ------------------------------------------------------------- data reads
 
   readSoc() {
@@ -216,6 +277,10 @@ export class MgSaicAccessory {
       : this.Characteristic.StatusFault.GENERAL_FAULT;
   }
 
+  readSeatHeat(field) {
+    return Boolean(this._lastStatus?.basicVehicleStatus?.[field]);
+  }
+
   // --------------------------------------------------------------- lock write
 
   /**
@@ -252,6 +317,65 @@ export class MgSaicAccessory {
         this.Characteristic.LockCurrentState,
         this.Characteristic.LockCurrentState.JAMMED,
       );
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  // ---------------------------------------------------------------- writes
+
+  /**
+   * One HomeKit switch per physical seat, but the API sets both seats in a
+   * single request, so this sends the other seat's last known level along
+   * with the one actually being changed, rather than clobbering it to off.
+   */
+  async setSeatHeat(side, value) {
+    const otherField = side === 'left' ? 'frontRightSeatHeatLevel' : 'frontLeftSeatHeatLevel';
+    const otherOn = Boolean(this._lastStatus?.basicVehicleStatus?.[otherField]);
+    const leftLevel = side === 'left' ? (value ? 3 : 0) : (otherOn ? 3 : 0);
+    const rightLevel = side === 'right' ? (value ? 3 : 0) : (otherOn ? 3 : 0);
+    this.log.info(`Setting seat heat via HomeKit: left=${leftLevel ? 'on' : 'off'} right=${rightLevel ? 'on' : 'off'}`);
+
+    try {
+      await this.client.controlHeatedSeats(this.vin, { leftLevel, rightLevel });
+      this._lastStatus = {
+        ...this._lastStatus,
+        basicVehicleStatus: {
+          ...this._lastStatus?.basicVehicleStatus,
+          frontLeftSeatHeatLevel: leftLevel,
+          frontRightSeatHeatLevel: rightLevel,
+        },
+      };
+    } catch (err) {
+      this.log.warn(`Seat heat command failed: ${err.message}`);
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  async setRearDefrost(value) {
+    this.log.info(`${value ? 'Starting' : 'Stopping'} rear window defrost via HomeKit...`);
+    try {
+      await this.client.controlRearWindowHeat(this.vin, value);
+      this._lastStatus = {
+        ...this._lastStatus,
+        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, rmtHtdRrWndSt: value ? 1 : 0 },
+      };
+    } catch (err) {
+      this.log.warn(`Rear defrost command failed: ${err.message}`);
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  /** windowId mapping beyond the driver's window is inferred, not confirmed - see saic-client.js. */
+  async setWindow(field, windowId, value) {
+    this.log.info(`${value ? 'Opening' : 'Closing'} ${field} via HomeKit...`);
+    try {
+      await this.client.controlWindow(this.vin, windowId, { open: value });
+      this._lastStatus = {
+        ...this._lastStatus,
+        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, [field]: value ? 1 : 0 },
+      };
+    } catch (err) {
+      this.log.warn(`Window command failed: ${err.message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
@@ -304,6 +428,25 @@ export class MgSaicAccessory {
       this.exteriorTempService.updateCharacteristic(
         this.Characteristic.StatusFault, this.readTemperatureFault('exteriorTemperature'),
       );
+    }
+    if (this.enableHeatedSeats) {
+      this.leftSeatHeatService.updateCharacteristic(this.Characteristic.On, this.readSeatHeat('frontLeftSeatHeatLevel'));
+      this.rightSeatHeatService.updateCharacteristic(this.Characteristic.On, this.readSeatHeat('frontRightSeatHeatLevel'));
+    }
+    if (this.enableRearDefrost) {
+      this.rearDefrostService.updateCharacteristic(
+        this.Characteristic.On, Boolean(this._lastStatus?.basicVehicleStatus?.rmtHtdRrWndSt),
+      );
+    }
+    if (this.enableWindowControls) {
+      const windows = [
+        ['driverWindow', 0], ['passengerWindow', 1], ['rearLeftWindow', 2], ['rearRightWindow', 3],
+      ];
+      for (const [field, i] of windows) {
+        this.windowServices[i].updateCharacteristic(
+          this.Characteristic.On, Boolean(this._lastStatus?.basicVehicleStatus?.[field]),
+        );
+      }
     }
   }
 

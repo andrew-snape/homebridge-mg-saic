@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.5.0
+
+- Added heated seat Switches (left/right), a rear window defrost Switch, and four window open/close Switches. All ported from the reference client (`saic-python-client-ng`'s climate and windows modules), byte-verified against a dry run, but **not yet confirmed against real hardware**. Off by default (`enableHeatedSeats`, `enableRearDefrost`, `enableWindowControls`), see `TESTING.md` section 5 before enabling.
+- Heated seats are labelled by physical side (left/right), not driver/passenger, since the API's own labelling is ambiguous across markets. Window switches beyond the driver's window use an inferred, not confirmed, mapping. See `docs/API.md` for the full reasoning.
+
 ## 0.4.0
 
 - Added two `TemperatureSensor` services: interior and exterior temperature, sourced from `basicVehicleStatus.interiorTemperature` / `exteriorTemperature`. New `enableTemperatureSensors` config option (default on). Guards against the API's occasional -128 unavailable-field sentinel by falling back to the last known good reading and flagging `StatusFault` instead of showing a nonsensical temperature.

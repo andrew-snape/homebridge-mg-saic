@@ -20,12 +20,17 @@ Exposes one MG EV as one HomeKit accessory with:
 - **Switch** — cabin pre-conditioning status (read-only for now)
 - **Outlet** — charging cable plugged in (`On`) and actively drawing (`InUse`)
 - **TemperatureSensor** × 2 — interior and exterior temperature. Falls back to the last known good reading and flags `StatusFault` if the API returns an unavailable-field sentinel instead of a real value
+- **Switch** × 2 — heated seats, left and right (off by default, see below)
+- **Switch** — rear window defrost (off by default, see below)
+- **Switch** × 4 — window open/close, driver/passenger/rear-left/rear-right (off by default, see below)
 
 Deliberately left out: tyre pressures, odometer, trip data, windows. They exist in the API but HomeKit has nowhere sensible to put them.
 
 **Lock/unlock has been confirmed working against real hardware.** The request format (`POST /vehicle/control` with an `rvcReqType`/`rvcParams` body) is ported from the reference `saic-python-client-ng` client, and unlocking has been confirmed to actually open the doors on a real MG4.
 
 Cabin pre-conditioning is still read-only: starting it also goes through `/vehicle/control`, but with a different, unverified param set that hasn't been ported yet.
+
+**Heated seats, rear defrost, and window control are new, unverified against real hardware, and off by default.** Each has its own config option (`enableHeatedSeats`, `enableRearDefrost`, `enableWindowControls`) so you opt in only once you've tested it, per `TESTING.md`. Seat heat switches are labelled by physical side (left/right) rather than driver/passenger, since the underlying API is ambiguous about which is which depending on market, see `docs/API.md`. Window switches beyond the driver's window use an inferred, not confirmed, mapping, test the driver's window first.
 
 Built for a single-vehicle account. If your account has more than one vehicle, set the `vin` config option to pin the plugin to a specific one, see Configuration below.
 
@@ -54,7 +59,10 @@ Via Homebridge Config UI X (the plugin ships a `config.schema.json`, which drive
       "pollIntervalMinutes": 15,
       "enablePreconditioning": true,
       "enableDoorSensors": true,
-      "enableTemperatureSensors": true
+      "enableTemperatureSensors": true,
+      "enableHeatedSeats": false,
+      "enableRearDefrost": false,
+      "enableWindowControls": false
     }
   ]
 }
@@ -74,7 +82,7 @@ See [`TESTING.md`](TESTING.md) for a staged approach: verify the API client stan
 
 ## Status
 
-Running in production against a real MG4: battery, lock state, doors, boot, bonnet, and charging all confirmed reading correctly, and lock/unlock confirmed working, unlocking actually opens the doors. Pre-conditioning start is not yet implemented.
+Running in production against a real MG4: battery, lock state, doors, boot, bonnet, and charging all confirmed reading correctly, and lock/unlock confirmed working, unlocking actually opens the doors. Heated seats, rear defrost, and window control are coded and byte-verified against the reference client but not yet tested against real hardware, off by default. Pre-conditioning start is not yet implemented.
 
 Not yet submitted for [Homebridge plugin verification](https://github.com/homebridge/plugins/wiki/Verified-Plugins). The main functional blocker (confirming lock/unlock against real hardware) is now resolved, submission is just a matter of deciding to do it. See `CHANGELOG.md` for release history.
 
