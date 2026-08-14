@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.5.1
+
+- Fixed: control commands (lock/unlock, seat heat, rear defrost, windows) sent in quick succession — e.g. tapping several switches in Home within the same minute — could time out even though the car reacted, because each one ran its own independent 60s poll loop against the same vehicle at the same time. `/vehicle/control` requests are now queued and sent one at a time.
+- Debug logging now includes the `failureType` field when the car's response contains one, so a genuine rejection from the vehicle looks different from a plain timeout.
+- Every control command (lock/unlock, seat heat, defrost, windows) now logs an explicit "succeeded" line at info level on success, not just on failure, so the log makes it unambiguous which attempts actually reached the car.
+
 ## 0.5.0
 
 - Added heated seat Switches (left/right), a rear window defrost Switch, and four window open/close Switches. All ported from the reference client (`saic-python-client-ng`'s climate and windows modules), byte-verified against a dry run, but **not yet confirmed against real hardware**. Off by default (`enableHeatedSeats`, `enableRearDefrost`, `enableWindowControls`), see `TESTING.md` section 5 before enabling.

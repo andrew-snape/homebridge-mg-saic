@@ -131,6 +131,10 @@ If it works: the response from `/vehicle/control` includes a fresh `basicVehicle
 
 All three are off by default (`enableHeatedSeats`, `enableRearDefrost`, `enableWindowControls` in config) precisely because they haven't been tested yet. Enable them one at a time, same car-in-sight discipline as lock/unlock.
 
+Since 0.5.1, `/vehicle/control` commands (lock, seat heat, defrost, windows) are queued and sent one at a time rather than in parallel, so tapping several switches close together no longer makes them time out fighting each other. Still, for the actual hardware confirmation below, trigger **one switch, wait for it to fully settle (success or the "command failed" log line), then the next** — that isolates whether a specific command works from whether it was just queued behind another one.
+
+If a command times out and you want to see why, turn on debug logging (Homebridge UI: Settings → this plugin's bridge → toggle Debug, or run the bridge with `-D`) and reproduce it. `src/saic-client.js` logs `code=... event-id=... data=...` per HTTP attempt at debug level, plus `failureType=...` when the car's own response includes one, which tells you whether the car rejected the command outright versus the request just never getting a response.
+
 ### Heated seats
 
 Turn on **one side only** first. Physically check which seat actually warms up, don't assume the "Left seat heat" switch controls the seat on the left, the mapping between the API's param IDs and physical seats is inferred from field names, not confirmed (see `docs/API.md`). If it's backwards, that's a one-line fix in `src/accessory.js` (swap which field each switch reads/writes), not a deep bug.

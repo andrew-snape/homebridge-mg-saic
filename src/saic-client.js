@@ -97,6 +97,19 @@ export class SaicClient {
     this.region = r.code;
     this.token = '';
     this.log = log ?? { info: () => {}, debug: () => {}, warn: () => {} };
+    // /vehicle/control commands are serialised through this chain. Firing two at once (e.g.
+    // tapping a window switch while a seat-heat switch is still mid-poll) means two independent
+    // 60s event-id retry loops hit the same vehicle at once; the car appears to only track one
+    // in-flight command and the earlier one then times out even though the car reacted to it.
+    // See TESTING.md for how this showed up in a real Homebridge log.
+    this._controlQueue = Promise.resolve();
+  }
+
+  /** Runs fn() only after every previously queued control command has settled (win or lose). */
+  _enqueueControl(fn) {
+    const result = this._controlQueue.then(fn, fn);
+    this._controlQueue = result.then(() => {}, () => {});
+    return result;
   }
 
   get isLoggedIn() {
@@ -169,8 +182,16 @@ export class SaicClient {
     const code = json.code ?? -1;
     const message = json.message ?? 'Unknown error';
     const respEventId = res.headers.get('event-id');
+    // Present on /vehicle/control responses when the car itself rejected the command (e.g. it's
+    // asleep, or in a state that won't accept that command) rather than the request just being
+    // slow. Not documented anywhere; surfaced here so a real rejection is visible instead of
+    // looking identical to a plain timeout.
+    const failureType = json.data?.failureType ?? json.failureType;
 
-    this.log.debug(`[${method} ${path}] code=${code} event-id=${respEventId ?? '-'} data=${json.data !== undefined ? 'yes' : 'no'}`);
+    this.log.debug(
+      `[${method} ${path}] code=${code} event-id=${respEventId ?? '-'} data=${json.data !== undefined ? 'yes' : 'no'}` +
+      (failureType !== undefined ? ` failureType=${failureType}` : ''),
+    );
 
     if (code === 401 || code === 403 || res.status === 401 || res.status === 403) {
       this.token = '';
@@ -260,11 +281,18 @@ export class SaicClient {
   // (paramId 7: 3 for doors, 2 for tailgate), and a four-byte zero terminator (paramId 255).
   // Confirmed working against a real MG4: unlocking actually opens the doors.
 
-  /** POST /vehicle/control is async like status/charging: same event-id retry loop. */
+  /**
+   * POST /vehicle/control is async like status/charging: same event-id retry loop. Queued (see
+   * _enqueueControl above) so that two control commands never race the vehicle at once - only
+   * one is in flight at a time, and a second tap while one is already running waits its turn
+   * instead of timing out.
+   */
   vehicleControl(vin, { rvcReqType, rvcParams = null }) {
-    return this.requestWithEventId('POST', '/vehicle/control', {
-      jsonBody: { rvcReqType, rvcParams, vin: sha256Hex(vin) },
-    });
+    return this._enqueueControl(() =>
+      this.requestWithEventId('POST', '/vehicle/control', {
+        jsonBody: { rvcReqType, rvcParams, vin: sha256Hex(vin) },
+      }),
+    );
   }
 
   lockVehicle(vin) {

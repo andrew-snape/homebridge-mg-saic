@@ -311,6 +311,7 @@ export class MgSaicAccessory {
         },
       };
       this.lockService.updateCharacteristic(this.Characteristic.LockCurrentState, this.readLockState());
+      this.log.info(`${wantLocked ? 'Lock' : 'Unlock'} command succeeded.`);
     } catch (err) {
       this.log.warn(`${wantLocked ? 'Lock' : 'Unlock'} command failed: ${err.message}`);
       this.lockService.updateCharacteristic(
@@ -345,6 +346,7 @@ export class MgSaicAccessory {
           frontRightSeatHeatLevel: rightLevel,
         },
       };
+      this.log.info('Seat heat command succeeded.');
     } catch (err) {
       this.log.warn(`Seat heat command failed: ${err.message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
@@ -359,6 +361,7 @@ export class MgSaicAccessory {
         ...this._lastStatus,
         basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, rmtHtdRrWndSt: value ? 1 : 0 },
       };
+      this.log.info('Rear defrost command succeeded.');
     } catch (err) {
       this.log.warn(`Rear defrost command failed: ${err.message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
@@ -374,6 +377,7 @@ export class MgSaicAccessory {
         ...this._lastStatus,
         basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, [field]: value ? 1 : 0 },
       };
+      this.log.info(`Window command succeeded (${field}).`);
     } catch (err) {
       this.log.warn(`Window command failed: ${err.message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
