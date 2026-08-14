@@ -22,7 +22,7 @@ Exposes one MG EV as one HomeKit accessory with:
 
 Deliberately left out: tyre pressures, odometer, trip data, windows. They exist in the API but HomeKit has nowhere sensible to put them.
 
-**Lock/unlock has not been run against real hardware yet.** The request format (`POST /vehicle/control` with an `rvcReqType`/`rvcParams` body) is ported from the reference `saic-python-client-ng` client, not hand-derived, and the base64-encoded param bytes have been checked to match that reference exactly. But nobody has watched a real MG respond to it. Test it deliberately and cautiously per [`TESTING.md`](TESTING.md) before relying on it, ideally with the car in sight.
+**Lock/unlock has been confirmed working against real hardware.** The request format (`POST /vehicle/control` with an `rvcReqType`/`rvcParams` body) is ported from the reference `saic-python-client-ng` client, and unlocking has been confirmed to actually open the doors on a real MG4.
 
 Cabin pre-conditioning is still read-only: starting it also goes through `/vehicle/control`, but with a different, unverified param set that hasn't been ported yet.
 
@@ -72,9 +72,9 @@ See [`TESTING.md`](TESTING.md) for a staged approach: verify the API client stan
 
 ## Status
 
-Running in production against a real MG4 for read-only status: battery, lock state, doors, boot, bonnet, and charging. Lock/unlock is wired up but not yet confirmed against real hardware, see the warning above and `TESTING.md`. Pre-conditioning start is not yet implemented.
+Running in production against a real MG4: battery, lock state, doors, boot, bonnet, and charging all confirmed reading correctly, and lock/unlock confirmed working, unlocking actually opens the doors. Pre-conditioning start is not yet implemented.
 
-Not yet submitted for [Homebridge plugin verification](https://github.com/homebridge/plugins/wiki/Verified-Plugins), deliberately: lock/unlock needs to be confirmed working against real hardware first, see `TESTING.md`. See `CHANGELOG.md` for release history.
+Not yet submitted for [Homebridge plugin verification](https://github.com/homebridge/plugins/wiki/Verified-Plugins). The main functional blocker (confirming lock/unlock against real hardware) is now resolved, submission is just a matter of deciding to do it. See `CHANGELOG.md` for release history.
 
 ## Contributing
 

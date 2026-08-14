@@ -258,7 +258,7 @@ export class SaicClient {
   // unlocks and needs five rvcParams: three unknown-purpose zero bytes (paramId 4-6, present in
   // every observed unlock request in the reference client but never explained), the lock target
   // (paramId 7: 3 for doors, 2 for tailgate), and a four-byte zero terminator (paramId 255).
-  // This has NOT been run against real hardware yet - see the plugin's TESTING.md before trusting it.
+  // Confirmed working against a real MG4: unlocking actually opens the doors.
 
   /** POST /vehicle/control is async like status/charging: same event-id retry loop. */
   vehicleControl(vin, { rvcReqType, rvcParams = null }) {

@@ -16,10 +16,9 @@
  * Tyre pressure, odometer and trip data are deliberately left out, per the
  * brief: they exist in the API but have no sensible HomeKit home.
  *
- * LockMechanism is now writable: setting it in HomeKit sends a real
- * lock/unlock command via /vehicle/control. This has been checked against
- * the reference client's request format byte-for-byte but NOT yet against
- * real hardware. See TESTING.md before relying on it.
+ * LockMechanism is writable: setting it in HomeKit sends a real lock/unlock
+ * command via /vehicle/control. Confirmed working against a real MG4,
+ * unlocking actually opens the doors.
  */
 
 export class MgSaicAccessory {

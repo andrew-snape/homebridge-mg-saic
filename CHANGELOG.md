@@ -5,6 +5,7 @@ All notable changes to this project are documented here. This project doesn't ye
 ## 0.2.1
 
 - No functional changes. Republishes after 0.2.0 was accidentally re-run through the publish workflow (npm rejects publishing over an existing version, this bumps past it).
+- Lock/unlock (introduced in 0.2.0) confirmed working against a real MG4: unlocking actually opens the doors, and the contact sensors correctly reflect it.
 
 ## 0.2.0
 

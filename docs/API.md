@@ -134,7 +134,7 @@ Response handling rules:
 
 ## Lock/unlock control
 
-Ported from `saic-python-client-ng`'s `api/vehicle/locks` module, not derived from this project's own traffic capture. Not yet confirmed against real hardware from this project, see the main `TESTING.md`.
+Ported from `saic-python-client-ng`'s `api/vehicle/locks` module, not derived from this project's own traffic capture. Confirmed working against a real MG4, unlocking actually opens the doors.
 
 ```
 POST /vehicle/control

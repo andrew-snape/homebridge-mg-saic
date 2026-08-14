@@ -112,6 +112,8 @@ Logging in via this plugin will sign your iSmart phone app out, since SAIC only 
 
 ## 4. Testing lock/unlock
 
+**Confirmed working**: unlocking has been tested against a real MG4 and the doors actually opened, contact sensors correctly reflected it too. The steps below are kept for anyone setting this up fresh or re-testing after a change to the lock/unlock code.
+
 This is the first write command this plugin sends, so it's worth being deliberate about it rather than just tapping the tile in Home and seeing what happens.
 
 **Do this with the car in sight**, ideally in a driveway or car park where you can see whether the indicators flash / hear the locks click. Have the physical key or phone-as-key nearby as a fallback in case something behaves unexpectedly.
