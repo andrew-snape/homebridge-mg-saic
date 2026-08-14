@@ -32,11 +32,12 @@ export class MgSaicPlatform {
     this.enablePreconditioning = config.enablePreconditioning ?? true;
     this.enableDoorSensors = config.enableDoorSensors ?? true;
     this.enableTemperatureSensors = config.enableTemperatureSensors ?? true;
-    // Off by default: these are new writable controls, not yet confirmed against real
-    // hardware (unlike lock/unlock). See TESTING.md before turning them on.
+    // Off by default: writable controls not yet confirmed against real hardware when this
+    // was written (unlike lock/unlock). See TESTING.md before turning them on. There is no
+    // equivalent enableWindowControls option: window open/close was tried and confirmed not
+    // to work on a real MG4, see README.md and CHANGELOG.md, so it was removed entirely.
     this.enableHeatedSeats = config.enableHeatedSeats ?? false;
     this.enableRearDefrost = config.enableRearDefrost ?? false;
-    this.enableWindowControls = config.enableWindowControls ?? false;
     this.configuredVin = config.vin;
 
     this.client = new SaicClient(this.region, { log: this.log });
@@ -102,7 +103,6 @@ export class MgSaicPlatform {
       enableTemperatureSensors: this.enableTemperatureSensors,
       enableHeatedSeats: this.enableHeatedSeats,
       enableRearDefrost: this.enableRearDefrost,
-      enableWindowControls: this.enableWindowControls,
     });
   }
 

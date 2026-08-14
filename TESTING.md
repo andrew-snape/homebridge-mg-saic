@@ -127,11 +127,11 @@ Recommended order:
 
 If it works: the response from `/vehicle/control` includes a fresh `basicVehicleStatus`, which the plugin uses to update the lock tile immediately rather than waiting for the next poll, so you should see it settle within the same 20 to 30 second window the status/charging calls take when the car's asleep.
 
-## 5. Testing heated seats, rear defrost, and window control
+## 5. Testing heated seats and rear defrost
 
-All three are off by default (`enableHeatedSeats`, `enableRearDefrost`, `enableWindowControls` in config) precisely because they haven't been tested yet. Enable them one at a time, same car-in-sight discipline as lock/unlock.
+Both are off by default (`enableHeatedSeats`, `enableRearDefrost` in config). Both are now **confirmed working** against a real MG4 (software version SWi165 - R11, Australia), but stay off by default since they're newer than lock/unlock. Enable them one at a time, same car-in-sight discipline as lock/unlock.
 
-Since 0.5.1, `/vehicle/control` commands (lock, seat heat, defrost, windows) are queued and sent one at a time rather than in parallel, so tapping several switches close together no longer makes them time out fighting each other. Still, for the actual hardware confirmation below, trigger **one switch, wait for it to fully settle (success or the "command failed" log line), then the next** — that isolates whether a specific command works from whether it was just queued behind another one.
+Since 0.5.1, `/vehicle/control` commands (lock, seat heat, defrost) are queued and sent one at a time rather than in parallel, so tapping several switches close together no longer makes them time out fighting each other. Still, for the actual hardware confirmation below, trigger **one switch, wait for it to fully settle (success or the "command failed" log line), then the next** — that isolates whether a specific command works from whether it was just queued behind another one.
 
 If a command times out and you want to see why, turn on debug logging (Homebridge UI: Settings → this plugin's bridge → toggle Debug, or run the bridge with `-D`) and reproduce it. `src/saic-client.js` logs `code=... event-id=... data=...` per HTTP attempt at debug level, plus `failureType=...` when the car's own response includes one, which tells you whether the car rejected the command outright versus the request just never getting a response.
 
@@ -145,16 +145,12 @@ Then turn on the other side while the first is still on, and confirm the first s
 
 Straightforward on/off. Turn it on, confirm the rear windscreen's heating element actually engages (you should be able to feel warmth on the glass within a minute or two), turn it off, confirm it stops.
 
-### Windows
+### Windows — already tried, don't bother
 
-**Test the driver's window first**, it's the one unambiguous mapping (paramId 9, matches the reference client and this project's own status field naming). Turn it on (open) and off (close) via the "Driver window" switch and confirm the correct window moves.
-
-Only after that works, test the other three one at a time; **the API request for "close driver window" explicitly tells the car to leave every other window alone**, so testing them individually should be safe, but confirm each one moves the window its name suggests before trusting the mapping. If "Passenger window" actually moves the rear-left window instead, for example, the fix is reordering the `WINDOW_ID` constants in `src/saic-client.js` to match reality, then updating `docs/API.md`.
-
-Windows are the least-confident mapping in this whole plugin, more caution here than anywhere else. Consider testing with the car stationary and unoccupied, and be ready for a window to end up somewhere unexpected the first time.
+Window open/close was tested against a real MG4 (software version SWi165 - R11, Australia) and confirmed **not to work**, across several attempts: locked, unlocked with the driver's door held open, and freshly started. Every attempt got `code 8` back from the car, `"Request failed. Please check the vehicle status and try again."`, while lock, seat heat, and rear defrost all succeeded fine in the same sessions. There's no switch or config option for this, it's not exposed. The low-level request is still in `src/saic-client.js` (`controlWindow`/`WINDOW_ID`) in case a firmware update or a different vehicle behaves differently; if you try it and it works for you, an issue or PR is very welcome.
 
 ## Known gaps at this stage
 
 - Starting pre-conditioning is still read-only. It goes through `/vehicle/control` too, but with a different, unverified param set that hasn't been ported from the reference client yet.
-- Heated seats, rear defrost, and window control are coded and byte-verified against the reference client but not yet confirmed against real hardware, hence section 5 above.
+- Window open/close doesn't work, see section 5 above. Not a config option, not a bug to chase further unless you're on different hardware/firmware.
 - Only tested against a single vehicle. If your account has more than one, set the `vin` config option to pin a specific one explicitly rather than relying on "first vehicle returned."

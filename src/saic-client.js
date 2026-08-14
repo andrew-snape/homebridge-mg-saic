@@ -355,11 +355,14 @@ export class SaicClient {
   // one request (which ones are "requested", paramId 8/9/10/11/12) plus a single open/close flag
   // (paramId 13, 3 = open, 0 = close) that applies to whichever windows were marked requested.
   //
-  // WINDOW_ID.DRIVER is unambiguous (both the reference client and this project's own captured
-  // /vehicle/status response call it "driver"). WINDOW_2/3/4 are this project's best guess at
-  // passenger/rear-left/rear-right, inferred from field declaration order, NOT confirmed. Test
-  // the driver window first; if the others move the wrong window, fix the mapping in
-  // WINDOW_ID below rather than in the accessory. NOT yet confirmed against real hardware.
+  // Tested against a real MG4 and confirmed NOT to work: the car consistently rejects it with
+  // code 8, "Request failed. Please check the vehicle status and try again.", regardless of lock
+  // state, an open driver's door, or the car having just been started - tried all three. No
+  // HomeKit accessory calls this method for that reason (see accessory.js). Left here, unused,
+  // in case a firmware update or a different vehicle ever behaves differently; if you're
+  // resurrecting this, WINDOW_ID.DRIVER is the one confirmed-correct mapping (both the reference
+  // client and this project's own /vehicle/status capture call it "driver"), WINDOW_2/3/4 were
+  // never confirmed since the base command never worked.
 
   controlWindow(vin, windowId, { open }) {
     const allWindowIds = [WINDOW_ID.SUNROOF, WINDOW_ID.DRIVER, WINDOW_ID.WINDOW_2, WINDOW_ID.WINDOW_3, WINDOW_ID.WINDOW_4];

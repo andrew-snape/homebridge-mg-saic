@@ -25,29 +25,33 @@
  * it can't report (see tyre pressure fields in a live capture), so both
  * readers treat implausible values as a fault rather than trusting them.
  *
- * Heated seats, rear defrost, and window control are all writable Switches,
- * same as LockMechanism, but NOT yet confirmed against real hardware (unlike
- * the lock). Off by default (enableHeatedSeats/enableRearDefrost/
- * enableWindowControls all default to false) until tested - see TESTING.md.
- * Seat heat is labelled by physical side (left/right) rather than
- * driver/passenger, since the status API uses positional field names
+ * Heated seats and rear defrost are writable Switches, same as
+ * LockMechanism, confirmed working against real hardware. Off by default
+ * (enableHeatedSeats/enableRearDefrost default to false) until tested - see
+ * TESTING.md. Seat heat is labelled by physical side (left/right) rather
+ * than driver/passenger, since the status API uses positional field names
  * (frontLeftSeatHeatLevel) while the reference client's own naming is
  * functional (driver/passenger) - conflating the two would risk labelling
- * the wrong seat depending on market. Window mapping beyond the driver's
- * window is inferred, not confirmed, see the comment in saic-client.js.
+ * the wrong seat depending on market.
+ *
+ * Window open/close was tried and confirmed NOT to work: the car
+ * consistently rejects the command with "Request failed. Please check the
+ * vehicle status and try again." regardless of lock state, door-open state,
+ * or being freshly started. There's no HomeKit switch for it. The
+ * low-level request is still in saic-client.js (controlWindow/WINDOW_ID)
+ * in case a future firmware update or a different vehicle behaves
+ * differently, but nothing in this accessory calls it. See CHANGELOG.md.
  */
-
-import { WINDOW_ID } from './saic-client.js';
 
 export class MgSaicAccessory {
   /**
    * @param {import('homebridge').PlatformAccessory} accessory
    * @param {import('./saic-client.js').SaicClient} client
-   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean, enableTemperatureSensors: boolean, enableHeatedSeats: boolean, enableRearDefrost: boolean, enableWindowControls: boolean }} opts
+   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean, enableTemperatureSensors: boolean, enableHeatedSeats: boolean, enableRearDefrost: boolean }} opts
    */
   constructor(accessory, client, {
     vin, log, api, enablePreconditioning, enableDoorSensors, enableTemperatureSensors,
-    enableHeatedSeats, enableRearDefrost, enableWindowControls,
+    enableHeatedSeats, enableRearDefrost,
   }) {
     this.accessory = accessory;
     this.client = client;
@@ -62,7 +66,6 @@ export class MgSaicAccessory {
     this.enableTemperatureSensors = enableTemperatureSensors;
     this.enableHeatedSeats = enableHeatedSeats;
     this.enableRearDefrost = enableRearDefrost;
-    this.enableWindowControls = enableWindowControls;
 
     this.setupInfoService();
     this.setupBatteryService();
@@ -73,7 +76,6 @@ export class MgSaicAccessory {
     if (this.enableTemperatureSensors) this.setupTemperatureSensors();
     if (this.enableHeatedSeats) this.setupHeatedSeatSwitches();
     if (this.enableRearDefrost) this.setupRearDefrostSwitch();
-    if (this.enableWindowControls) this.setupWindowSwitches();
 
     // Cached latest reads, so a slow poll of one endpoint doesn't block
     // characteristic reads for data from the other endpoint.
@@ -200,23 +202,6 @@ export class MgSaicAccessory {
     this.rearDefrostService.getCharacteristic(this.Characteristic.On)
       .onGet(() => Boolean(this._lastStatus?.basicVehicleStatus?.rmtHtdRrWndSt))
       .onSet((value) => this.setRearDefrost(value));
-  }
-
-  setupWindowSwitches() {
-    const windows = [
-      ['Driver window', 'driverWindow', WINDOW_ID.DRIVER],
-      ['Passenger window', 'passengerWindow', WINDOW_ID.WINDOW_2],
-      ['Rear left window', 'rearLeftWindow', WINDOW_ID.WINDOW_3],
-      ['Rear right window', 'rearRightWindow', WINDOW_ID.WINDOW_4],
-    ];
-    this.windowServices = windows.map(([name, field, windowId]) => {
-      const service = this.accessory.getService(name)
-        ?? this.accessory.addService(this.Service.Switch, name, field);
-      service.getCharacteristic(this.Characteristic.On)
-        .onGet(() => Boolean(this._lastStatus?.basicVehicleStatus?.[field]))
-        .onSet((value) => this.setWindow(field, windowId, value));
-      return service;
-    });
   }
 
   // ------------------------------------------------------------- data reads
@@ -368,22 +353,6 @@ export class MgSaicAccessory {
     }
   }
 
-  /** windowId mapping beyond the driver's window is inferred, not confirmed - see saic-client.js. */
-  async setWindow(field, windowId, value) {
-    this.log.info(`${value ? 'Opening' : 'Closing'} ${field} via HomeKit...`);
-    try {
-      await this.client.controlWindow(this.vin, windowId, { open: value });
-      this._lastStatus = {
-        ...this._lastStatus,
-        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, [field]: value ? 1 : 0 },
-      };
-      this.log.info(`Window command succeeded (${field}).`);
-    } catch (err) {
-      this.log.warn(`Window command failed: ${err.message}`);
-      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-    }
-  }
-
   // ---------------------------------------------------------------- polling
 
   /** Called by the platform on its poll interval. Pushes fresh values into HomeKit. */
@@ -441,16 +410,6 @@ export class MgSaicAccessory {
       this.rearDefrostService.updateCharacteristic(
         this.Characteristic.On, Boolean(this._lastStatus?.basicVehicleStatus?.rmtHtdRrWndSt),
       );
-    }
-    if (this.enableWindowControls) {
-      const windows = [
-        ['driverWindow', 0], ['passengerWindow', 1], ['rearLeftWindow', 2], ['rearRightWindow', 3],
-      ];
-      for (const [field, i] of windows) {
-        this.windowServices[i].updateCharacteristic(
-          this.Characteristic.On, Boolean(this._lastStatus?.basicVehicleStatus?.[field]),
-        );
-      }
     }
   }
 

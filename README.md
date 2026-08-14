@@ -22,15 +22,14 @@ Exposes one MG EV as one HomeKit accessory with:
 - **TemperatureSensor** × 2 — interior and exterior temperature. Falls back to the last known good reading and flags `StatusFault` if the API returns an unavailable-field sentinel instead of a real value
 - **Switch** × 2 — heated seats, left and right (off by default, see below)
 - **Switch** — rear window defrost (off by default, see below)
-- **Switch** × 4 — window open/close, driver/passenger/rear-left/rear-right (off by default, see below)
 
-Deliberately left out: tyre pressures, odometer, trip data, windows. They exist in the API but HomeKit has nowhere sensible to put them.
+Deliberately left out: tyre pressures, odometer, trip data, window open/close. Tyre pressure, odometer and trip data have no sensible HomeKit home. Window open/close was tried and does not work, see below.
 
-**Lock/unlock has been confirmed working against real hardware.** The request format (`POST /vehicle/control` with an `rvcReqType`/`rvcParams` body) is ported from the reference `saic-python-client-ng` client, and unlocking has been confirmed to actually open the doors on a real MG4.
+**Lock/unlock, heated seats, and rear defrost have all been confirmed working against real hardware.** The request format (`POST /vehicle/control` with an `rvcReqType`/`rvcParams` body) is ported from the reference `saic-python-client-ng` client. Unlocking has been confirmed to actually open the doors, seat heat and rear defrost have both been confirmed to physically engage, all on a real MG4 running **software version SWi165 - R11 (Australia)**.
 
 Cabin pre-conditioning is still read-only: starting it also goes through `/vehicle/control`, but with a different, unverified param set that hasn't been ported yet.
 
-**Heated seats, rear defrost, and window control are new, unverified against real hardware, and off by default.** Each has its own config option (`enableHeatedSeats`, `enableRearDefrost`, `enableWindowControls`) so you opt in only once you've tested it, per `TESTING.md`. Seat heat switches are labelled by physical side (left/right) rather than driver/passenger, since the underlying API is ambiguous about which is which depending on market, see `docs/API.md`. Window switches beyond the driver's window use an inferred, not confirmed, mapping, test the driver's window first.
+**Window open/close was tried and does not work.** Same request shape as the reference client, byte-verified, but the car consistently rejects it with `code 8`, `"Request failed. Please check the vehicle status and try again."`, whether the car was locked, unlocked with the driver's door held open, or freshly started, all tried against the same MG4 (SWi165 - R11, Australia). There's no config option or switch for it; the low-level `controlWindow`/`WINDOW_ID` request is still in `src/saic-client.js` for reference, unused, in case a firmware update or a different vehicle ever behaves differently. See `CHANGELOG.md`.
 
 Built for a single-vehicle account. If your account has more than one vehicle, set the `vin` config option to pin the plugin to a specific one, see Configuration below.
 
@@ -61,8 +60,7 @@ Via Homebridge Config UI X (the plugin ships a `config.schema.json`, which drive
       "enableDoorSensors": true,
       "enableTemperatureSensors": true,
       "enableHeatedSeats": false,
-      "enableRearDefrost": false,
-      "enableWindowControls": false
+      "enableRearDefrost": false
     }
   ]
 }
@@ -82,7 +80,7 @@ See [`TESTING.md`](TESTING.md) for a staged approach: verify the API client stan
 
 ## Status
 
-Running in production against a real MG4: battery, lock state, doors, boot, bonnet, and charging all confirmed reading correctly, and lock/unlock confirmed working, unlocking actually opens the doors. Heated seats, rear defrost, and window control are coded and byte-verified against the reference client but not yet tested against real hardware, off by default. Pre-conditioning start is not yet implemented.
+Running in production against a real MG4 (software version SWi165 - R11, Australia): battery, lock state, doors, boot, bonnet, and charging all confirmed reading correctly; lock/unlock, heated seats, and rear defrost all confirmed working. Window open/close was tried and confirmed not to work, see above, it's not exposed as a switch. Pre-conditioning start is not yet implemented.
 
 Not yet submitted for [Homebridge plugin verification](https://github.com/homebridge/plugins/wiki/Verified-Plugins). The main functional blocker (confirming lock/unlock against real hardware) is now resolved, submission is just a matter of deciding to do it. See `CHANGELOG.md` for release history.
 

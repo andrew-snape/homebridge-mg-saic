@@ -168,11 +168,11 @@ Body for unlocking the doors:
 
 The response echoes a fresh `basicVehicleStatus` (same shape as `/vehicle/status`) with the updated `lockStatus`, so a client can reflect the new state immediately rather than waiting for the next poll.
 
-## Heated seats, rear defrost, and window control
+## Heated seats and rear defrost
 
-Also ported from `saic-python-client-ng` (`api/vehicle/climate` and `api/vehicle/windows`), not derived from this project's own traffic capture. **Not yet confirmed against real hardware.**
+Also ported from `saic-python-client-ng` (`api/vehicle/climate`), not derived from this project's own traffic capture. **Confirmed working against a real MG4 (software version SWi165 - R11, Australia).**
 
-All three use the same `POST /vehicle/control` endpoint and async event-id pattern as lock/unlock.
+Both use the same `POST /vehicle/control` endpoint and async event-id pattern as lock/unlock.
 
 ### Heated seats (`rvcReqType: "5"`)
 
@@ -207,7 +207,7 @@ Both seats are set in a single request, there's no way to change one without als
 
 Status is readable back from `basicVehicleStatus.rmtHtdRrWndSt` in `/vehicle/status`.
 
-### Windows (`rvcReqType: "3"`)
+### Windows (`rvcReqType: "3"`) — tried, does not work
 
 Every window is named in a single request, whichever ones are marked "requested" (`0x01`) get the open/close command in param 13, the rest (`0x00`) are left alone:
 
@@ -226,7 +226,9 @@ Every window is named in a single request, whichever ones are marked "requested"
 }
 ```
 
-Param 8 = sunroof, 9 = driver's window. Both of those are unambiguous, the reference client and this project's own status field names agree on "driver". Params 10, 11, 12 are this project's best guess at passenger/rear-left/rear-right, inferred from field declaration order in both the reference client's enum and this project's captured status response (`driverWindow`, `passengerWindow`, `rearLeftWindow`, `rearRightWindow`), but **not confirmed against real hardware**. Test the driver's window first; if the others move the wrong window, the fix is a one-line change to `WINDOW_ID` in `src/saic-client.js`.
+Param 8 = sunroof, 9 = driver's window, both unambiguous per the reference client and this project's own status field names. Params 10, 11, 12 were this project's best guess at passenger/rear-left/rear-right, inferred from field declaration order, but were never confirmed since the base command doesn't work.
+
+**Tried against a real MG4 (software version SWi165 - R11, Australia) and confirmed not to work.** The request is byte-identical to the reference client's, but every attempt got `code: 8` back, `"Request failed. Please check the vehicle status and try again.(255)"`, whether the car was locked, unlocked with the driver's door held open, or freshly started (all three tried). Other `/vehicle/control` commands (lock, seat heat, rear defrost) succeed fine in the same session, so this looks like either a genuine restriction on this vehicle/software version for remote window movement, or a precondition this project hasn't found. `controlWindow`/`WINDOW_ID` are still in `src/saic-client.js` for reference but nothing in the HomeKit accessory calls them. If you get this working on a different car or firmware version, an issue or PR would be very welcome.
 
 ## Rate limiting
 
@@ -248,9 +250,9 @@ Field names as returned by the API, decoded meaning based on a live capture:
 | `interiorTemperature`, `exteriorTemperature` | Degrees Celsius. Drives the two `TemperatureSensor` services. Occasionally seen returning -128 elsewhere in this response (tyre pressure fields) when a value isn't ready, so a client should treat implausible readings as unavailable rather than trusting them outright |
 | `mileage` | Tenths of a km |
 | `vehicleAlarmStatus` | Meaning not yet confirmed |
-| `frontLeftSeatHeatLevel`, `frontRightSeatHeatLevel` | `0` = off, drives the two heated seat Switches (off by default, unverified) |
-| `rmtHtdRrWndSt` | `0` = off, drives the rear defrost Switch (off by default, unverified) |
-| `driverWindow`, `passengerWindow`, `rearLeftWindow`, `rearRightWindow` | `0` = closed, drives the four window Switches (off by default, unverified) |
+| `frontLeftSeatHeatLevel`, `frontRightSeatHeatLevel` | `0` = off, drives the two heated seat Switches (off by default, confirmed working) |
+| `rmtHtdRrWndSt` | `0` = off, drives the rear defrost Switch (off by default, confirmed working) |
+| `driverWindow`, `passengerWindow`, `rearLeftWindow`, `rearRightWindow` | `0` = closed. Readable, but there's no writable Switch for these, see "Windows" above |
 
 ### `chrgMgmtData` (from `/vehicle/charging/mgmtData`)
 

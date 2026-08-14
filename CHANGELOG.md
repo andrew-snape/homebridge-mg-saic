@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.6.0
+
+- **Breaking config change:** removed the `enableWindowControls` option and the four window open/close Switches. Tested against a real MG4 (software version SWi165 - R11, Australia) across several conditions — locked, unlocked with the driver's door held open, freshly started — and the car consistently rejects the command with `code 8`, `"Request failed. Please check the vehicle status and try again."`. Lock, seat heat, and rear defrost all work fine in the same sessions, so this looks like either a genuine restriction on this vehicle/software version or a precondition this project hasn't found. If you had `enableWindowControls: true` in `config.json`, it's now a harmless unused key, safe to remove. The low-level `controlWindow`/`WINDOW_ID` request is still in `src/saic-client.js`, unused, for anyone who wants to pick this up on different hardware.
+- Heated seats and rear defrost, added unverified in 0.5.0, are now **confirmed working** against the same MG4.
+
 ## 0.5.1
 
 - Fixed: control commands (lock/unlock, seat heat, rear defrost, windows) sent in quick succession — e.g. tapping several switches in Home within the same minute — could time out even though the car reacted, because each one ran its own independent 60s poll loop against the same vehicle at the same time. `/vehicle/control` requests are now queued and sent one at a time.
