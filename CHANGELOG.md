@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.2.1
+
+- No functional changes. Republishes after 0.2.0 was accidentally re-run through the publish workflow (npm rejects publishing over an existing version, this bumps past it).
+
 ## 0.2.0
 
 - Added writable `LockMechanism`: lock and unlock now send a real `POST /vehicle/control` command instead of being read-only. Ported from the `saic-python-client-ng` reference client's request format. **Not yet confirmed against real hardware**, see `TESTING.md` before relying on it.
