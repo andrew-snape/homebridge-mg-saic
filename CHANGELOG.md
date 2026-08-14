@@ -2,10 +2,13 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.3.0
+
+- Lock/unlock confirmed working against a real MG4: unlocking actually opens the doors, and the contact sensors correctly reflect it. All "not yet confirmed against real hardware" warnings removed from the README, docs/API.md, TESTING.md, and code comments.
+
 ## 0.2.1
 
 - No functional changes. Republishes after 0.2.0 was accidentally re-run through the publish workflow (npm rejects publishing over an existing version, this bumps past it).
-- Lock/unlock (introduced in 0.2.0) confirmed working against a real MG4: unlocking actually opens the doors, and the contact sensors correctly reflect it.
 
 ## 0.2.0
 

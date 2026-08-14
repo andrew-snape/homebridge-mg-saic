@@ -1,0 +1,297 @@
+/**
+ * MG / SAIC iSmart API client.
+ *
+ * Ported from the verified mg-saic-test.mjs reference (itself ported from
+ * saic-ismart-client-ng, MIT, used by townsmcp/mg-saic-ha). Request signing
+ * has been checked byte-identical to the Python reference, and login,
+ * vehicle list, vehicle status and charging status have all been run live
+ * against the Australian gateway.
+ *
+ * Two things that are easy to get wrong and give misleading errors:
+ *   1. The VIN goes in as a SHA-256 hex digest, never in the clear. A raw VIN
+ *      returns error 36805, "not within the package scope", which reads like
+ *      a subscription problem but is not.
+ *   2. Status and command endpoints are asynchronous. The first call returns
+ *      an event-id header and no data. You resend with that event-id until
+ *      the car answers, which can take 20 to 30 seconds if it is asleep.
+ */
+
+import crypto from 'node:crypto';
+
+export const REGIONS = {
+  EU: { uri: 'https://gateway-mg-eu.soimt.com/api.app/v1/', code: 'eu' },
+  Australia: { uri: 'https://gateway-mg-au.soimt.com/api.app/v1/', code: 'au' },
+  China: { uri: 'https://tap-cn.soimt.com/api.app/v1/', code: 'cn' },
+  Brazil: { uri: 'https://gateway-mg-br.soimt.com/api.app/v1/', code: 'br' },
+  Israel: { uri: 'https://gateway-mg-il.soimt.com/api.app/v1/', code: 'il' },
+  Turkey: { uri: 'https://gateway-mg-tr.soimt.com/api.app/v1/', code: 'tr' },
+  India: { uri: 'https://gateway-mg-in.soimt.com/api.app/v1/', code: 'in' },
+  Thailand: { uri: 'https://gateway-mg-th.soimt.com/api.app/v1/', code: 'th' },
+};
+
+const TENANT_ID = '459771';
+const BASIC_AUTH = 'Basic c3dvcmQ6c3dvcmRfc2VjcmV0';
+const USER_AGENT = 'Europe/2.1.0 (iPad; iOS 18.5; Scale/2.00)';
+
+// --------------------------------------------------------------------- crypto
+
+const md5Hex = (s) => crypto.createHash('md5').update(s, 'utf8').digest('hex');
+const sha1Hex = (s) => crypto.createHash('sha1').update(s, 'utf8').digest('hex');
+const sha256Hex = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+
+function encryptAes(plaintext, keyHex, ivHex) {
+  const c = crypto.createCipheriv('aes-128-cbc', Buffer.from(keyHex, 'hex'), Buffer.from(ivHex, 'hex'));
+  return Buffer.concat([c.update(Buffer.from(plaintext, 'utf8')), c.final()]).toString('hex');
+}
+
+function decryptAes(cipherHex, keyHex, ivHex) {
+  const d = crypto.createDecipheriv('aes-128-cbc', Buffer.from(keyHex, 'hex'), Buffer.from(ivHex, 'hex'));
+  return Buffer.concat([d.update(Buffer.from(cipherHex, 'hex')), d.final()]).toString('utf8');
+}
+
+const normalizeContentType = (ct) =>
+  !ct ? 'application/json'
+    : ct.includes('multipart') ? 'multipart/form-data'
+    : ct.includes('x-www-form-urlencoded') ? 'application/x-www-form-urlencoded'
+    : 'application/json';
+
+function appVerificationString({ path, ts, contentType, content, token }) {
+  const encryptKey = md5Hex(md5Hex(path + TENANT_ID + token + 'app') + ts + '1' + contentType);
+  const encrypted = content ? encryptAes(content, encryptKey, md5Hex(ts)) : '';
+  const value = path + TENANT_ID + token + 'app' + ts + '1' + contentType + encrypted;
+  return crypto.createHmac('sha256', md5Hex(encryptKey + ts)).update(value, 'utf8').digest('hex');
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// --------------------------------------------------------------------- errors
+
+export class SaicError extends Error {
+  constructor(message, code) {
+    super(message);
+    this.name = 'SaicError';
+    this.code = code;
+  }
+}
+
+class SaicRetry extends Error {
+  constructor(message, eventId, code) {
+    super(message);
+    this.name = 'SaicRetry';
+    this.eventId = eventId;
+    this.code = code;
+  }
+}
+
+// --------------------------------------------------------------------- client
+
+export class SaicClient {
+  /**
+   * @param {string} region One of the REGIONS keys, e.g. "Australia".
+   * @param {{ log?: { info: Function, debug: Function, warn: Function } }} opts
+   */
+  constructor(region = 'Australia', { log } = {}) {
+    const r = REGIONS[region];
+    if (!r) throw new Error(`Unknown region: ${region}`);
+    this.baseUri = r.uri;
+    this.region = r.code;
+    this.token = '';
+    this.log = log ?? { info: () => {}, debug: () => {}, warn: () => {} };
+  }
+
+  get isLoggedIn() {
+    return Boolean(this.token);
+  }
+
+  async rawRequest(method, path, { formBody, jsonBody, params, eventId } = {}) {
+    const query = params ? '?' + new URLSearchParams(params).toString() : '';
+    const url = this.baseUri + path.replace(/^\//, '') + query;
+    const requestPath = url.replace(this.baseUri, '/');
+    const ts = String(Date.now());
+
+    let rawBody = '';
+    let ct = 'application/json';
+    if (formBody) {
+      rawBody = new URLSearchParams(formBody).toString();
+      ct = 'application/x-www-form-urlencoded';
+    } else if (jsonBody) {
+      rawBody = JSON.stringify(jsonBody);
+    }
+
+    const normalized = normalizeContentType(ct);
+    let payload;
+    if (rawBody) {
+      const keyHex = md5Hex(
+        md5Hex(requestPath + TENANT_ID + this.token + 'app') + ts + '1' + normalized,
+      );
+      payload = encryptAes(rawBody.trim(), keyHex, md5Hex(ts));
+    }
+
+    const headers = {
+      'User-Agent': USER_AGENT,
+      'Content-Type': `${normalized};charset=utf-8`,
+      'Accept': 'application/json',
+      'REGION': this.region,
+      'APP-SEND-DATE': ts,
+      'APP-CONTENT-ENCRYPTED': '1',
+      'tenant-id': TENANT_ID,
+      'User-Type': 'app',
+      'APP-LANGUAGE-TYPE': 'en',
+      'ORIGINAL-CONTENT-TYPE': normalized,
+      'APP-VERIFICATION-STRING': appVerificationString({
+        path: requestPath, ts, contentType: normalized,
+        content: rawBody.trim(), token: this.token,
+      }),
+    };
+    if (this.token) headers['blade-auth'] = this.token;
+    if (eventId !== undefined) headers['event-id'] = eventId;
+    if (path === '/oauth/token') headers['Authorization'] = BASIC_AUTH;
+
+    const res = await fetch(url, { method, headers, body: payload });
+    const text = await res.text();
+
+    const sendDate = res.headers.get('app-send-date');
+    const originalCt = res.headers.get('original-content-type');
+    let body = text;
+    if (text.trim() && sendDate && originalCt) {
+      try {
+        body = decryptAes(text.trim(), md5Hex(sendDate + '1' + originalCt), md5Hex(sendDate));
+      } catch { /* wasn't encrypted after all */ }
+    }
+
+    let json;
+    try {
+      json = JSON.parse(body);
+    } catch {
+      throw new SaicError(`Non-JSON response (HTTP ${res.status}): ${body.slice(0, 300)}`, res.status);
+    }
+
+    const code = json.code ?? -1;
+    const message = json.message ?? 'Unknown error';
+    const respEventId = res.headers.get('event-id');
+
+    this.log.debug(`[${method} ${path}] code=${code} event-id=${respEventId ?? '-'} data=${json.data !== undefined ? 'yes' : 'no'}`);
+
+    if (code === 401 || code === 403 || res.status === 401 || res.status === 403) {
+      this.token = '';
+      throw new SaicError(`Logged out: ${message}`, code);
+    }
+    if ([2, 3, 7].includes(code)) throw new SaicError(message, code);
+
+    // Async pattern: an event-id with no data means "ask again with this id".
+    if (respEventId && json.data === undefined) {
+      throw new SaicRetry(message, respEventId, code);
+    }
+    if (code !== 0) {
+      if (eventId !== undefined && eventId !== '0') {
+        throw new SaicRetry(message, eventId, code);
+      }
+      throw new SaicError(message, code);
+    }
+    return json.data ?? json;
+  }
+
+  /** Retry loop for the asynchronous endpoints. Default timeout is generous for a cold car. */
+  async requestWithEventId(method, path, opts = {}, { timeoutMs = 60000, intervalMs = 3000 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    let eventId = '0';
+    let attempt = 0;
+
+    while (Date.now() < deadline) {
+      attempt++;
+      try {
+        return await this.rawRequest(method, path, { ...opts, eventId });
+      } catch (err) {
+        if (!(err instanceof SaicRetry)) throw err;
+        eventId = err.eventId;
+        this.log.debug(`waiting for the car (attempt ${attempt})...`);
+        await sleep(intervalMs);
+      }
+    }
+    throw new SaicError(`Timed out after ${timeoutMs / 1000}s waiting for the vehicle`, 408);
+  }
+
+  async login(username, password) {
+    const deviceId =
+      'simulator*********************************************' + Math.floor(Date.now() / 1000);
+
+    const data = await this.rawRequest('POST', '/oauth/token', {
+      formBody: {
+        grant_type: 'password',
+        username,
+        password: sha1Hex(password),
+        scope: 'all',
+        deviceId: `${deviceId}###com.saicmotor.europecar`,
+        deviceType: '0',
+        language: 'EN',
+        loginType: username.includes('@') ? '2' : '1',
+      },
+    });
+
+    const token = data.access_token ?? data.accessToken;
+    if (!token) throw new SaicError('No access token returned. Check your credentials.', 401);
+    this.token = token;
+    return data;
+  }
+
+  vehicleList() {
+    return this.rawRequest('GET', '/vehicle/list');
+  }
+
+  /** VIN must be hashed. Sending it raw returns the misleading error 36805. */
+  vehicleStatus(vin) {
+    return this.requestWithEventId('GET', '/vehicle/status', {
+      params: { vin: sha256Hex(vin), vehStatusReqType: '2' },
+    });
+  }
+
+  chargingStatus(vin) {
+    return this.requestWithEventId('GET', '/vehicle/charging/mgmtData', {
+      params: { vin: sha256Hex(vin) },
+    });
+  }
+
+  // ------------------------------------------------------------- lock control
+  //
+  // Ported from saic_ismart_client_ng.api.vehicle.locks (SAIC-iSmart-API/saic-python-client-ng,
+  // MIT), not from anything hand-derived. rvcReqType "1" locks with no params. rvcReqType "2"
+  // unlocks and needs five rvcParams: three unknown-purpose zero bytes (paramId 4-6, present in
+  // every observed unlock request in the reference client but never explained), the lock target
+  // (paramId 7: 3 for doors, 2 for tailgate), and a four-byte zero terminator (paramId 255).
+  // This has NOT been run against real hardware yet - see the plugin's TESTING.md before trusting it.
+
+  /** POST /vehicle/control is async like status/charging: same event-id retry loop. */
+  vehicleControl(vin, { rvcReqType, rvcParams = null }) {
+    return this.requestWithEventId('POST', '/vehicle/control', {
+      jsonBody: { rvcReqType, rvcParams, vin: sha256Hex(vin) },
+    });
+  }
+
+  lockVehicle(vin) {
+    return this.vehicleControl(vin, { rvcReqType: '1', rvcParams: null });
+  }
+
+  /** lockId: LOCK_ID.DOORS (3, default) or LOCK_ID.TAILGATE (2). */
+  unlockVehicle(vin, lockId = LOCK_ID.DOORS) {
+    return this.vehicleControl(vin, {
+      rvcReqType: '2',
+      rvcParams: [
+        { paramId: 4, paramValue: b64([0]) },
+        { paramId: 5, paramValue: b64([0]) },
+        { paramId: 6, paramValue: b64([0]) },
+        { paramId: 7, paramValue: b64([lockId]) },
+        { paramId: 255, paramValue: b64([0, 0, 0, 0]) },
+      ],
+    });
+  }
+
+  openTailgate(vin) {
+    return this.unlockVehicle(vin, LOCK_ID.TAILGATE);
+  }
+}
+
+export const LOCK_ID = { TAILGATE: 2, DOORS: 3 };
+
+function b64(bytes) {
+  return Buffer.from(bytes).toString('base64');
+}
