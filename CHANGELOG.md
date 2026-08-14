@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.4.0
+
+- Added two `TemperatureSensor` services: interior and exterior temperature, sourced from `basicVehicleStatus.interiorTemperature` / `exteriorTemperature`. New `enableTemperatureSensors` config option (default on). Guards against the API's occasional -128 unavailable-field sentinel by falling back to the last known good reading and flagging `StatusFault` instead of showing a nonsensical temperature.
+
 ## 0.3.0
 
 - Lock/unlock confirmed working against a real MG4: unlocking actually opens the doors, and the contact sensors correctly reflect it. All "not yet confirmed against real hardware" warnings removed from the README, docs/API.md, TESTING.md, and code comments.

@@ -19,15 +19,20 @@
  * LockMechanism is writable: setting it in HomeKit sends a real lock/unlock
  * command via /vehicle/control. Confirmed working against a real MG4,
  * unlocking actually opens the doors.
+ *
+ * interiorTemperature and exteriorTemperature drive two TemperatureSensor
+ * services. The API has occasionally been seen to return -128 for fields
+ * it can't report (see tyre pressure fields in a live capture), so both
+ * readers treat implausible values as a fault rather than trusting them.
  */
 
 export class MgSaicAccessory {
   /**
    * @param {import('homebridge').PlatformAccessory} accessory
    * @param {import('./saic-client.js').SaicClient} client
-   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean }} opts
+   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean, enableTemperatureSensors: boolean }} opts
    */
-  constructor(accessory, client, { vin, log, api, enablePreconditioning, enableDoorSensors }) {
+  constructor(accessory, client, { vin, log, api, enablePreconditioning, enableDoorSensors, enableTemperatureSensors }) {
     this.accessory = accessory;
     this.client = client;
     this.vin = vin;
@@ -38,6 +43,7 @@ export class MgSaicAccessory {
 
     this.enablePreconditioning = enablePreconditioning;
     this.enableDoorSensors = enableDoorSensors;
+    this.enableTemperatureSensors = enableTemperatureSensors;
 
     this.setupInfoService();
     this.setupBatteryService();
@@ -45,6 +51,7 @@ export class MgSaicAccessory {
     this.setupOutletService();
     if (this.enablePreconditioning) this.setupPreconditioningSwitch();
     if (this.enableDoorSensors) this.setupContactSensors();
+    if (this.enableTemperatureSensors) this.setupTemperatureSensors();
 
     // Cached latest reads, so a slow poll of one endpoint doesn't block
     // characteristic reads for data from the other endpoint.
@@ -133,6 +140,24 @@ export class MgSaicAccessory {
     });
   }
 
+  setupTemperatureSensors() {
+    this.interiorTempService = this.accessory.getService('Interior temperature')
+      ?? this.accessory.addService(this.Service.TemperatureSensor, 'Interior temperature', 'interiorTemperature');
+    this.interiorTempService.getCharacteristic(this.Characteristic.CurrentTemperature)
+      .setProps({ minValue: -50, maxValue: 80 })
+      .onGet(() => this.readTemperature('interiorTemperature'));
+    this.interiorTempService.getCharacteristic(this.Characteristic.StatusFault)
+      .onGet(() => this.readTemperatureFault('interiorTemperature'));
+
+    this.exteriorTempService = this.accessory.getService('Exterior temperature')
+      ?? this.accessory.addService(this.Service.TemperatureSensor, 'Exterior temperature', 'exteriorTemperature');
+    this.exteriorTempService.getCharacteristic(this.Characteristic.CurrentTemperature)
+      .setProps({ minValue: -50, maxValue: 80 })
+      .onGet(() => this.readTemperature('exteriorTemperature'));
+    this.exteriorTempService.getCharacteristic(this.Characteristic.StatusFault)
+      .onGet(() => this.readTemperatureFault('exteriorTemperature'));
+  }
+
   // ------------------------------------------------------------- data reads
 
   readSoc() {
@@ -168,6 +193,27 @@ export class MgSaicAccessory {
     return value
       ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
       : this.Characteristic.ContactSensorState.CONTACT_DETECTED;
+  }
+
+  /** true when the API returned a plausible temperature rather than an
+   * unavailable-field sentinel (-128 has been observed on other fields
+   * in the same response, e.g. tyre pressures, when a value isn't ready). */
+  isTemperatureValid(field) {
+    const value = this._lastStatus?.basicVehicleStatus?.[field];
+    return typeof value === 'number' && value > -60 && value < 80;
+  }
+
+  readTemperature(field) {
+    if (!this.isTemperatureValid(field)) return this[`_last${field}`] ?? 0;
+    const value = this._lastStatus.basicVehicleStatus[field];
+    this[`_last${field}`] = value;
+    return value;
+  }
+
+  readTemperatureFault(field) {
+    return this.isTemperatureValid(field)
+      ? this.Characteristic.StatusFault.NO_FAULT
+      : this.Characteristic.StatusFault.GENERAL_FAULT;
   }
 
   // --------------------------------------------------------------- lock write
@@ -244,6 +290,20 @@ export class MgSaicAccessory {
           this.Characteristic.ContactSensorState, this.readContactState(field),
         );
       }
+    }
+    if (this.enableTemperatureSensors) {
+      this.interiorTempService.updateCharacteristic(
+        this.Characteristic.CurrentTemperature, this.readTemperature('interiorTemperature'),
+      );
+      this.interiorTempService.updateCharacteristic(
+        this.Characteristic.StatusFault, this.readTemperatureFault('interiorTemperature'),
+      );
+      this.exteriorTempService.updateCharacteristic(
+        this.Characteristic.CurrentTemperature, this.readTemperature('exteriorTemperature'),
+      );
+      this.exteriorTempService.updateCharacteristic(
+        this.Characteristic.StatusFault, this.readTemperatureFault('exteriorTemperature'),
+      );
     }
   }
 

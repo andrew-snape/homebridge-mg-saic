@@ -62,6 +62,11 @@
         "title": "Expose door / boot / bonnet contact sensors",
         "type": "boolean",
         "default": true
+      },
+      "enableTemperatureSensors": {
+        "title": "Expose interior/exterior temperature sensors",
+        "type": "boolean",
+        "default": true
       }
     }
   }

@@ -31,6 +31,7 @@ export class MgSaicPlatform {
     this.pollIntervalMs = Math.max(5, config.pollIntervalMinutes ?? 15) * 60 * 1000;
     this.enablePreconditioning = config.enablePreconditioning ?? true;
     this.enableDoorSensors = config.enableDoorSensors ?? true;
+    this.enableTemperatureSensors = config.enableTemperatureSensors ?? true;
     this.configuredVin = config.vin;
 
     this.client = new SaicClient(this.region, { log: this.log });
@@ -93,6 +94,7 @@ export class MgSaicPlatform {
       api: this.api,
       enablePreconditioning: this.enablePreconditioning,
       enableDoorSensors: this.enableDoorSensors,
+      enableTemperatureSensors: this.enableTemperatureSensors,
     });
   }
 

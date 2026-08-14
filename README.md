@@ -19,6 +19,7 @@ Exposes one MG EV as one HomeKit accessory with:
 - **ContactSensor** × 6 — driver door, passenger door, rear left door, rear right door, boot, bonnet
 - **Switch** — cabin pre-conditioning status (read-only for now)
 - **Outlet** — charging cable plugged in (`On`) and actively drawing (`InUse`)
+- **TemperatureSensor** × 2 — interior and exterior temperature. Falls back to the last known good reading and flags `StatusFault` if the API returns an unavailable-field sentinel instead of a real value
 
 Deliberately left out: tyre pressures, odometer, trip data, windows. They exist in the API but HomeKit has nowhere sensible to put them.
 
@@ -52,7 +53,8 @@ Via Homebridge Config UI X (the plugin ships a `config.schema.json`, which drive
       "region": "Australia",
       "pollIntervalMinutes": 15,
       "enablePreconditioning": true,
-      "enableDoorSensors": true
+      "enableDoorSensors": true,
+      "enableTemperatureSensors": true
     }
   ]
 }

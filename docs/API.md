@@ -186,7 +186,7 @@ Field names as returned by the API, decoded meaning based on a live capture:
 | `driverWindow`, `passengerWindow`, `rearLeftWindow`, `rearRightWindow` | `0` = closed |
 | `engineStatus` | `0` = off |
 | `remoteClimateStatus` | `0` = off |
-| `interiorTemperature`, `exteriorTemperature` | Degrees Celsius |
+| `interiorTemperature`, `exteriorTemperature` | Degrees Celsius. Drives the two `TemperatureSensor` services. Occasionally seen returning -128 elsewhere in this response (tyre pressure fields) when a value isn't ready, so a client should treat implausible readings as unavailable rather than trusting them outright |
 | `mileage` | Tenths of a km |
 | `vehicleAlarmStatus` | Meaning not yet confirmed |
 
