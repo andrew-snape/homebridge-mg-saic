@@ -1,0 +1,68 @@
+{
+  "pluginAlias": "MgSaic",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "HomeKit control of an MG EV via the SAIC iSmart cloud API. Only one iSmart session is allowed at a time, so logging in here will sign the phone app out.",
+  "footerDisplay": "Set the account password via the MG_SAIC_PASSWORD environment variable instead of pasting it into this form where possible, so it doesn't sit unencrypted in config.json on the NAS.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Platform Name",
+        "type": "string",
+        "default": "MG SAIC",
+        "required": true
+      },
+      "username": {
+        "title": "iSmart account email",
+        "type": "string",
+        "required": true,
+        "placeholder": "you@example.com"
+      },
+      "password": {
+        "title": "iSmart account password",
+        "type": "string",
+        "required": false,
+        "description": "Leave blank and set MG_SAIC_PASSWORD in the Homebridge environment instead, if possible."
+      },
+      "region": {
+        "title": "Region",
+        "type": "string",
+        "default": "Australia",
+        "oneOf": [
+          { "title": "Australia", "enum": ["Australia"] },
+          { "title": "EU", "enum": ["EU"] },
+          { "title": "China", "enum": ["China"] },
+          { "title": "Brazil", "enum": ["Brazil"] },
+          { "title": "Israel", "enum": ["Israel"] },
+          { "title": "Turkey", "enum": ["Turkey"] },
+          { "title": "India", "enum": ["India"] },
+          { "title": "Thailand", "enum": ["Thailand"] }
+        ],
+        "required": true
+      },
+      "vin": {
+        "title": "Vehicle VIN (optional)",
+        "type": "string",
+        "description": "Leave blank to use the first vehicle returned by the account. Set this if the account ever returns more than one vehicle, to pin the plugin to the primary MG4."
+      },
+      "pollIntervalMinutes": {
+        "title": "Poll interval (minutes)",
+        "type": "integer",
+        "default": 15,
+        "minimum": 5,
+        "description": "SAIC's gateway can pause an account for 15 minutes if it sees too many logins. 15 minutes is the documented safe default."
+      },
+      "enablePreconditioning": {
+        "title": "Expose cabin pre-conditioning switch",
+        "type": "boolean",
+        "default": true
+      },
+      "enableDoorSensors": {
+        "title": "Expose door / boot / bonnet contact sensors",
+        "type": "boolean",
+        "default": true
+      }
+    }
+  }
+}

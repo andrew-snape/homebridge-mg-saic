@@ -1,0 +1,257 @@
+/**
+ * A single MG4 exposed as one HomeKit accessory with several services.
+ *
+ * Field mapping is taken from a live capture against the primary MG4 (see
+ * the "Confirmed field mapping" section of mg-saic-homebridge-brief.md):
+ *
+ *   lockStatus                        1 = locked, 0 = unlocked
+ *   driverDoor / passengerDoor /
+ *   rearLeftDoor / rearRightDoor      0 = closed, non-zero = open
+ *   bootStatus / bonnetStatus         0 = closed, non-zero = open
+ *   remoteClimateStatus               0 = off, non-zero = on
+ *   bmsPackSOCDsp                     tenths of a percent (680 -> 68.0%)
+ *   bmsChrgSts                        0 = not charging, non-zero = charging
+ *   ccuOnbdChrgrPlugOn                0 = unplugged, 1 = plugged in
+ *
+ * Tyre pressure, odometer and trip data are deliberately left out, per the
+ * brief: they exist in the API but have no sensible HomeKit home.
+ *
+ * LockMechanism is now writable: setting it in HomeKit sends a real
+ * lock/unlock command via /vehicle/control. This has been checked against
+ * the reference client's request format byte-for-byte but NOT yet against
+ * real hardware. See TESTING.md before relying on it.
+ */
+
+export class MgSaicAccessory {
+  /**
+   * @param {import('homebridge').PlatformAccessory} accessory
+   * @param {import('./saic-client.js').SaicClient} client
+   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean }} opts
+   */
+  constructor(accessory, client, { vin, log, api, enablePreconditioning, enableDoorSensors }) {
+    this.accessory = accessory;
+    this.client = client;
+    this.vin = vin;
+    this.log = log;
+    this.api = api;
+    this.Service = api.hap.Service;
+    this.Characteristic = api.hap.Characteristic;
+
+    this.enablePreconditioning = enablePreconditioning;
+    this.enableDoorSensors = enableDoorSensors;
+
+    this.setupInfoService();
+    this.setupBatteryService();
+    this.setupLockService();
+    this.setupOutletService();
+    if (this.enablePreconditioning) this.setupPreconditioningSwitch();
+    if (this.enableDoorSensors) this.setupContactSensors();
+
+    // Cached latest reads, so a slow poll of one endpoint doesn't block
+    // characteristic reads for data from the other endpoint.
+    this._lastStatus = null;
+    this._lastCharging = null;
+  }
+
+  setupInfoService() {
+    const info = this.accessory.getService(this.Service.AccessoryInformation)
+      ?? this.accessory.addService(this.Service.AccessoryInformation);
+    info
+      .setCharacteristic(this.Characteristic.Manufacturer, 'MG')
+      .setCharacteristic(this.Characteristic.Model, 'MG4')
+      .setCharacteristic(this.Characteristic.SerialNumber, this.vin || 'unknown-vin');
+  }
+
+  setupBatteryService() {
+    this.batteryService = this.accessory.getService(this.Service.Battery)
+      ?? this.accessory.addService(this.Service.Battery);
+
+    this.batteryService.getCharacteristic(this.Characteristic.BatteryLevel)
+      .onGet(() => this.readSoc());
+
+    this.batteryService.getCharacteristic(this.Characteristic.ChargingState)
+      .onGet(() => this.readChargingState());
+
+    this.batteryService.getCharacteristic(this.Characteristic.StatusLowBattery)
+      .onGet(() => (this.readSoc() <= 20
+        ? this.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
+        : this.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL));
+  }
+
+  setupLockService() {
+    this.lockService = this.accessory.getService(this.Service.LockMechanism)
+      ?? this.accessory.addService(this.Service.LockMechanism);
+
+    this.lockService.getCharacteristic(this.Characteristic.LockCurrentState)
+      .onGet(() => this.readLockState());
+
+    this.lockService.getCharacteristic(this.Characteristic.LockTargetState)
+      .onGet(() => (this.readLockState() === this.Characteristic.LockCurrentState.SECURED
+        ? this.Characteristic.LockTargetState.SECURED
+        : this.Characteristic.LockTargetState.UNSECURED))
+      .onSet((value) => this.setLockTarget(value));
+  }
+
+  setupOutletService() {
+    this.outletService = this.accessory.getService(this.Service.Outlet)
+      ?? this.accessory.addService(this.Service.Outlet);
+
+    this.outletService.getCharacteristic(this.Characteristic.On)
+      .onGet(() => this.readPluggedIn());
+
+    this.outletService.getCharacteristic(this.Characteristic.OutletInUse)
+      .onGet(() => this.readCharging());
+  }
+
+  setupPreconditioningSwitch() {
+    this.preconditionService = this.accessory.getService('Pre-conditioning')
+      ?? this.accessory.addService(this.Service.Switch, 'Pre-conditioning', 'preconditioning');
+
+    this.preconditionService.getCharacteristic(this.Characteristic.On)
+      .onGet(() => this.readClimateOn());
+    // Control (setting the switch on) is not wired to /vehicle/control yet;
+    // that endpoint hasn't been exercised against real hardware. Read-only
+    // for now, deliberately, rather than silently no-op-ing a write.
+  }
+
+  setupContactSensors() {
+    const doors = [
+      ['Driver door', 'driverDoor'],
+      ['Passenger door', 'passengerDoor'],
+      ['Rear left door', 'rearLeftDoor'],
+      ['Rear right door', 'rearRightDoor'],
+      ['Boot', 'bootStatus'],
+      ['Bonnet', 'bonnetStatus'],
+    ];
+
+    this.contactServices = doors.map(([name, field]) => {
+      const subtype = field;
+      const service = this.accessory.getService(name)
+        ?? this.accessory.addService(this.Service.ContactSensor, name, subtype);
+      service.getCharacteristic(this.Characteristic.ContactSensorState)
+        .onGet(() => this.readContactState(field));
+      return service;
+    });
+  }
+
+  // ------------------------------------------------------------- data reads
+
+  readSoc() {
+    const soc = this._lastCharging?.chrgMgmtData?.bmsPackSOCDsp;
+    if (soc === undefined || soc === null) return 0;
+    return Math.max(0, Math.min(100, soc / 10));
+  }
+
+  readChargingState() {
+    const charging = this._lastCharging?.chrgMgmtData?.bmsChrgSts;
+    return charging ? this.Characteristic.ChargingState.CHARGING : this.Characteristic.ChargingState.NOT_CHARGING;
+  }
+
+  readPluggedIn() {
+    return Boolean(this._lastCharging?.chrgMgmtData?.ccuOnbdChrgrPlugOn);
+  }
+
+  readCharging() {
+    return Boolean(this._lastCharging?.chrgMgmtData?.bmsChrgSts);
+  }
+
+  readLockState() {
+    const locked = this._lastStatus?.basicVehicleStatus?.lockStatus;
+    return locked ? this.Characteristic.LockCurrentState.SECURED : this.Characteristic.LockCurrentState.UNSECURED;
+  }
+
+  readClimateOn() {
+    return Boolean(this._lastStatus?.basicVehicleStatus?.remoteClimateStatus);
+  }
+
+  readContactState(field) {
+    const value = this._lastStatus?.basicVehicleStatus?.[field];
+    return value
+      ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+      : this.Characteristic.ContactSensorState.CONTACT_DETECTED;
+  }
+
+  // --------------------------------------------------------------- lock write
+
+  /**
+   * Handles a HomeKit lock/unlock request. Unverified against real hardware,
+   * see TESTING.md: this is the request shape from the reference client, run
+   * through the same signing and event-id polling as every read call, but
+   * nobody has watched a real MG4 respond to it yet.
+   */
+  async setLockTarget(value) {
+    const wantLocked = value === this.Characteristic.LockTargetState.SECURED;
+    this.log.info(`${wantLocked ? 'Locking' : 'Unlocking'} the MG4 via HomeKit...`);
+
+    try {
+      const result = wantLocked
+        ? await this.client.lockVehicle(this.vin)
+        : await this.client.unlockVehicle(this.vin);
+
+      // The control response echoes a fresh basicVehicleStatus with the new
+      // lock state when present, so reflect it immediately rather than
+      // waiting for the next poll. If it's missing, patch just the lock bit
+      // optimistically; the next poll corrects it either way.
+      const freshStatus = result?.basicVehicleStatus;
+      this._lastStatus = {
+        ...this._lastStatus,
+        basicVehicleStatus: freshStatus ?? {
+          ...this._lastStatus?.basicVehicleStatus,
+          lockStatus: wantLocked ? 1 : 0,
+        },
+      };
+      this.lockService.updateCharacteristic(this.Characteristic.LockCurrentState, this.readLockState());
+    } catch (err) {
+      this.log.warn(`${wantLocked ? 'Lock' : 'Unlock'} command failed: ${err.message}`);
+      this.lockService.updateCharacteristic(
+        this.Characteristic.LockCurrentState,
+        this.Characteristic.LockCurrentState.JAMMED,
+      );
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  // ---------------------------------------------------------------- polling
+
+  /** Called by the platform on its poll interval. Pushes fresh values into HomeKit. */
+  async refresh() {
+    try {
+      this._lastStatus = await this.client.vehicleStatus(this.vin);
+      this.pushStatusCharacteristics();
+    } catch (err) {
+      this.log.warn(`Status refresh failed: ${err.message}`);
+    }
+
+    try {
+      this._lastCharging = await this.client.chargingStatus(this.vin);
+      this.pushChargingCharacteristics();
+    } catch (err) {
+      this.log.warn(`Charging refresh failed: ${err.message}`);
+    }
+  }
+
+  pushStatusCharacteristics() {
+    this.lockService.updateCharacteristic(this.Characteristic.LockCurrentState, this.readLockState());
+    if (this.enablePreconditioning) {
+      this.preconditionService.updateCharacteristic(this.Characteristic.On, this.readClimateOn());
+    }
+    if (this.enableDoorSensors) {
+      const doors = [
+        ['driverDoor', 0], ['passengerDoor', 1], ['rearLeftDoor', 2],
+        ['rearRightDoor', 3], ['bootStatus', 4], ['bonnetStatus', 5],
+      ];
+      for (const [field, i] of doors) {
+        this.contactServices[i].updateCharacteristic(
+          this.Characteristic.ContactSensorState, this.readContactState(field),
+        );
+      }
+    }
+  }
+
+  pushChargingCharacteristics() {
+    this.batteryService.updateCharacteristic(this.Characteristic.BatteryLevel, this.readSoc());
+    this.batteryService.updateCharacteristic(this.Characteristic.ChargingState, this.readChargingState());
+    this.outletService.updateCharacteristic(this.Characteristic.On, this.readPluggedIn());
+    this.outletService.updateCharacteristic(this.Characteristic.OutletInUse, this.readCharging());
+  }
+}

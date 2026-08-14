@@ -1,0 +1,27 @@
+{
+  "name": "homebridge-mg-saic",
+  "version": "0.2.0",
+  "description": "Homebridge plugin for HomeKit control of an MG EV via the SAIC iSmart cloud API.",
+  "type": "module",
+  "main": "src/index.js",
+  "license": "MIT",
+  "keywords": [
+    "homebridge-plugin",
+    "homebridge",
+    "mg",
+    "saic",
+    "ismart",
+    "ev"
+  ],
+  "engines": {
+    "node": ">=18.0.0",
+    "homebridge": ">=1.8.0"
+  },
+  "files": [
+    "src",
+    "config.schema.json"
+  ],
+  "scripts": {
+    "check": "node --check src/index.js && node --check src/platform.js && node --check src/accessory.js && node --check src/saic-client.js"
+  }
+}
