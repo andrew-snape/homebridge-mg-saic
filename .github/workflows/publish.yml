@@ -1,0 +1,30 @@
+name: Publish to npm
+
+# Fires whenever you publish a GitHub Release. Tag the release with the same
+# version as package.json (e.g. v0.2.0 for "version": "0.2.0"), publish it,
+# and this pushes that version to npm automatically.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # allows npm provenance, ties the published package back to this exact commit/workflow
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci || npm install
+
+      - run: npm run check
+
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
