@@ -119,6 +119,7 @@ export class MgSaicPlatform {
     const uuid = this.api.hap.uuid.generate(`mg-saic-${vin}`);
     let platformAccessory = this.accessories.find((a) => a.UUID === uuid);
 
+    const isNew = !platformAccessory;
     if (!platformAccessory) {
       platformAccessory = new this.api.platformAccessory('MG4', uuid);
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [platformAccessory]);
@@ -135,6 +136,16 @@ export class MgSaicPlatform {
       enableHeatedSeats:        this.enableHeatedSeats,
       enableRearDefrost:        this.enableRearDefrost,
     });
+
+    // The accessory constructor above adds or reuses services according to the current
+    // enable* config. When it came from the cache, those additions only exist in memory
+    // until the cached copy on disk is rewritten - Homebridge's API contract is that a
+    // plugin mutating a cached accessory calls this itself. Without it the on-disk cache
+    // keeps describing whatever set of services the previous run had, which is exactly
+    // the kind of drift that makes a newly enabled switch fail to show up in the Home app.
+    if (!isNew) {
+      this.api.updatePlatformAccessories([platformAccessory]);
+    }
   }
 
   startPolling(): void {

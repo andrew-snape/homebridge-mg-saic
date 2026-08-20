@@ -64,7 +64,7 @@ function makeHap() {
   return hap;
 }
 
-function makeAccessory() {
+function makeAccessory(overrides = {}) {
   const hap = makeHap();
   const serviceCache = {};
 
@@ -101,18 +101,21 @@ function makeAccessory() {
     platformAccessory,
   };
 
+  const log = { info: vi.fn(), debug: vi.fn(), warn: vi.fn() };
+
   const acc = new MgSaicAccessory(platformAccessory, client, {
     vin: 'TESTVIN123',
-    log: { info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
+    log,
     api,
     enablePreconditioning: true,
     enableDoorSensors: true,
     enableTemperatureSensors: true,
     enableHeatedSeats: true,
     enableRearDefrost: true,
+    ...overrides,
   });
 
-  return { acc, client };
+  return { acc, client, log };
 }
 
 // ---------------------------------------------------------------------------
@@ -306,5 +309,38 @@ describe('setPreconditioning', () => {
     client.startClimate.mockRejectedValue(new Error('timeout'));
     await expect(acc.setPreconditioning(true)).rejects.toThrow('HapStatusError');
     expect(acc.readClimateOn()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// logExposedServices
+// ---------------------------------------------------------------------------
+
+describe('logExposedServices', () => {
+  const lines = (log) => log.info.mock.calls.map(([m]) => m).join('\n');
+
+  it('lists an enabled optional service as exposed', () => {
+    const { log } = makeAccessory({ enablePreconditioning: true });
+    expect(lines(log)).toMatch(/HomeKit services exposed:.*Pre-conditioning/);
+  });
+
+  it('reports a disabled optional service as disabled in config, not silently', () => {
+    // The case this exists for: a missing tile in the Home app used to look
+    // identical in the log to a service that was never configured on.
+    const { log } = makeAccessory({ enablePreconditioning: false });
+    const out = lines(log);
+    expect(out).toMatch(/Not exposed, disabled in config:.*Pre-conditioning/);
+    expect(out).not.toMatch(/HomeKit services exposed:.*Pre-conditioning/);
+  });
+
+  it('always reports the services that are not behind a config flag', () => {
+    const { log } = makeAccessory({
+      enablePreconditioning: false,
+      enableDoorSensors: false,
+      enableTemperatureSensors: false,
+      enableHeatedSeats: false,
+      enableRearDefrost: false,
+    });
+    expect(lines(log)).toMatch(/HomeKit services exposed: Battery, Lock, Charging outlet\./);
   });
 });
