@@ -141,7 +141,22 @@ A real Homebridge log against a live MG4 showed both of these commands rejected 
 
 Turn on **one side only** first. Physically check which seat actually warms up, don't assume the "Left seat heat" switch controls the seat on the left, the mapping between the API's param IDs and physical seats is inferred from field names, not confirmed (see `docs/API.md`). If it's backwards, that's a one-line fix in `src/accessory.js` (swap which field each switch reads/writes), not a deep bug.
 
-Then turn on the other side while the first is still on, and confirm the first side **stays on** rather than turning off, both seats are set together in a single API request, and the plugin is supposed to remember the other side's state rather than clobbering it. This was checked in a dry run against a fake HomeKit bridge, but it's worth eyes-on confirmation with the real seats.
+Then turn on the other side while the first is still on, and confirm the first side **stays on** rather than turning off, both seats are set together in a single API request, and the plugin is supposed to remember the other side's state rather than clobbering it.
+
+This part is now **confirmed against a real MG4** (v0.9.2, software version SWi165 - R11, Australia). Turning on the right seat and then the left, twenty seconds apart, produced exactly the right pair of requests, and the car accepted both:
+
+```
+Setting seat heat via HomeKit: left=off right=on
+[POST /vehicle/control] code=0 ... failureType=0
+Seat heat command succeeded.
+Setting seat heat via HomeKit: left=on right=on
+[POST /vehicle/control] code=0 ... failureType=0
+Seat heat command succeeded.
+```
+
+The second request carried `right=on` rather than clobbering it to off, which is the behaviour that was previously only dry-run tested. Note what made that work: the optimistic local state update `setSeatHeat` performs after a successful command. No status poll happened in between (the default interval is 15 minutes), so the remembered value is the only thing the second request could have drawn on.
+
+Two caveats on how far that goes. It confirms the **requests** are right and the car accepted them; nobody has separately reported back that the physical seats warmed up and stayed warm, so the param-ID-to-physical-seat question in the paragraph above is still open. And both commands returned `code: 4` ("The remote control instruction failed, please try again later.") on an intermediate poll before succeeding about five seconds later — that code is genuinely transient and is meant to be retried, unlike the `code: 8` rejections above, which never resolve. Don't be tempted to treat the two the same way.
 
 ### Rear window defrost
 
@@ -154,6 +169,15 @@ Ported from the reference client but **not yet confirmed against real hardware**
 ### Windows — already tried, don't bother
 
 Window open/close was tested against a real MG4 (software version SWi165 - R11, Australia) and confirmed **not to work**, across several attempts: locked, unlocked with the driver's door held open, and freshly started. Every attempt got `code 8` back from the car, `"Request failed. Please check the vehicle status and try again."`, while lock, seat heat, and rear defrost all succeeded fine in the same sessions. There's no switch or config option for this, it's not exposed. The low-level request is still in `src/saic-client.js` (`controlWindow`/`WINDOW_ID`) in case a firmware update or a different vehicle behaves differently; if you try it and it works for you, an issue or PR is very welcome.
+
+## 6. When everything times out at once
+
+Worth recognising, because it looks alarming and isn't a plugin bug. If **every** request starts timing out — including plain `/vehicle/status` and `/vehicle/charging/mgmtData` polls, not just control commands — with `code: 4` on every retry, check where in the sequence it's failing:
+
+- `POST /oauth/token` and `GET /vehicle/list` succeeding instantly, but the async event-id polls returning `code: 4` forever, means the account and the gateway are fine and the **gateway-to-car** round trip is what's broken. The car is unreachable: asleep, parked somewhere without cellular signal, low 12V battery, or backing off after a burst of commands.
+- Login itself failing would be the opposite signal, and would point at the account (SAIC allows one active session, so the phone app signing in kicks the plugin out, and vice versa).
+
+This was observed for roughly 45 minutes straight, across several Homebridge restarts, and then cleared up on its own by the next morning with no code change. Restarting the bridge does not help and just starts a fresh 60s timeout cycle against a car that isn't answering — leave it alone for a while instead. Since 0.9.2 the timeout line quotes the car's last actual response, which makes this case easier to recognise than a bare "Timed out after 60s".
 
 ## Known gaps at this stage
 

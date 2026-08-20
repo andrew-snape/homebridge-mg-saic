@@ -17,7 +17,7 @@ Exposes one MG EV as one HomeKit accessory with:
 - **Battery** — state of charge, charging state, low battery warning
 - **LockMechanism** — central locking, lock and unlock, writable
 - **ContactSensor** × 6 — driver door, passenger door, rear left door, rear right door, boot, bonnet
-- **Switch** — cabin pre-conditioning status (read-only for now)
+- **Switch** — cabin pre-conditioning, i.e. remote climate / aircon. Writable since 0.9.0, but **not yet confirmed against real hardware**
 - **Outlet** — charging cable plugged in (`On`) and actively drawing (`InUse`)
 - **TemperatureSensor** × 2 — interior and exterior temperature. Falls back to the last known good reading and flags `StatusFault` if the API returns an unavailable-field sentinel instead of a real value
 - **Switch** × 2 — heated seats, left and right (off by default, see below)
@@ -27,7 +27,7 @@ Deliberately left out: tyre pressures, odometer, trip data, window open/close. T
 
 **Lock/unlock, heated seats, and rear defrost have all been confirmed working against real hardware.** The request format (`POST /vehicle/control` with an `rvcReqType`/`rvcParams` body) is ported from the reference `saic-python-client-ng` client. Unlocking has been confirmed to actually open the doors, seat heat and rear defrost have both been confirmed to physically engage, all on a real MG4 running **software version SWi165 - R11 (Australia)**.
 
-Cabin pre-conditioning is still read-only: starting it also goes through `/vehicle/control`, but with a different, unverified param set that hasn't been ported yet.
+**Cabin pre-conditioning — the remote aircon — is writable as of 0.9.0**, via `/vehicle/control` with `rvcReqType: "6"`, ported from the reference client's `start_ac`/`stop_ac`. It is **not yet confirmed against real hardware**, unlike the controls above. It is also the one control that is easy to overlook: it's governed by `enablePreconditioning` in config, and if that's off you simply get no switch in the Home app. Since 0.9.3 the startup log lists which services were exposed and which were left out, so you can check at a glance.
 
 **Window open/close was tried and does not work.** Same request shape as the reference client, byte-verified, but the car consistently rejects it with `code 8`, `"Request failed. Please check the vehicle status and try again."`, whether the car was locked, unlocked with the driver's door held open, or freshly started, all tried against the same MG4 (SWi165 - R11, Australia). There's no config option or switch for it; the low-level `controlWindow`/`WINDOW_ID` request is still in `src/saic-client.js` for reference, unused, in case a firmware update or a different vehicle ever behaves differently. See `CHANGELOG.md`.
 
@@ -80,7 +80,7 @@ See [`TESTING.md`](TESTING.md) for a staged approach: verify the API client stan
 
 ## Status
 
-Running in production against a real MG4 (software version SWi165 - R11, Australia): battery, lock state, doors, boot, bonnet, and charging all confirmed reading correctly; lock/unlock, heated seats, and rear defrost all confirmed working. Window open/close was tried and confirmed not to work, see above, it's not exposed as a switch. Pre-conditioning start is not yet implemented.
+Running in production against a real MG4 (software version SWi165 - R11, Australia): battery, lock state, doors, boot, bonnet, and charging all confirmed reading correctly; lock/unlock, heated seats, and rear defrost all confirmed working. Window open/close was tried and confirmed not to work, see above, it's not exposed as a switch. Pre-conditioning start is implemented as of 0.9.0 but has not yet been confirmed against the car.
 
 Not yet submitted for [Homebridge plugin verification](https://github.com/homebridge/plugins/wiki/Verified-Plugins). The main functional blocker (confirming lock/unlock against real hardware) is now resolved, submission is just a matter of deciding to do it. See `CHANGELOG.md` for release history.
 

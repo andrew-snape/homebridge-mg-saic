@@ -100,6 +100,33 @@ export class MgSaicAccessory {
     // to avoid hidden-class churn from dynamic property assignment.
     this._lastInteriorTemperature = null;
     this._lastExteriorTemperature = null;
+
+    this.logExposedServices();
+  }
+
+  /**
+   * Says which switches and sensors this run actually put into HomeKit, and which
+   * were left out because they're off in config. Every optional service here is
+   * behind an enable* flag, and until this existed there was no way to tell from a
+   * log whether a missing tile in the Home app meant "disabled in config" or
+   * "something went wrong" - the startup log looked identical either way.
+   */
+  logExposedServices() {
+    const exposed = ['Battery', 'Lock', 'Charging outlet'];
+    const disabled = [];
+    const record = (on, label) => {
+      (on ? exposed : disabled).push(label);
+    };
+    record(this.enablePreconditioning, 'Pre-conditioning');
+    record(this.enableDoorSensors, 'Door sensors');
+    record(this.enableTemperatureSensors, 'Temperature sensors');
+    record(this.enableHeatedSeats, 'Heated seats');
+    record(this.enableRearDefrost, 'Rear defrost');
+
+    this.log.info(`HomeKit services exposed: ${exposed.join(', ')}.`);
+    if (disabled.length) {
+      this.log.info(`Not exposed, disabled in config: ${disabled.join(', ')}.`);
+    }
   }
 
   setupInfoService() {
