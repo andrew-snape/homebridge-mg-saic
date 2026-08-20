@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.9.0
+
+- **Fixed: the pre-conditioning switch is now writable.** Previously it only read the car's actual climate state - tapping it in Home flipped the tile locally but sent nothing to the car, so it silently reverted to "off" on the next poll (up to `pollIntervalMinutes` later) since nothing had actually changed. It's now wired to `/vehicle/control` (`rvcReqType: "6"`, ported from the reference client's `start_ac`/`stop_ac`), same pattern as the heated seat and rear defrost switches. **Not yet confirmed against real hardware** - see TESTING.md section 5 before relying on it for anything time-sensitive.
+
 ## 0.8.0
 
 - **TypeScript migration.** All source files have been converted from plain JavaScript (with JSDoc types) to TypeScript. The plugin is now compiled to `dist/` before publishing; `dist/` is what npm packages. Strict mode is enabled — any `undefined` access that the `-128` sentinel guard was defending against at runtime is now also caught at compile time.

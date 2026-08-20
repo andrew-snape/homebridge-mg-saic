@@ -145,12 +145,16 @@ Then turn on the other side while the first is still on, and confirm the first s
 
 Straightforward on/off. Turn it on, confirm the rear windscreen's heating element actually engages (you should be able to feel warmth on the glass within a minute or two), turn it off, confirm it stops.
 
+### Pre-conditioning
+
+Ported from the reference client but **not yet confirmed against real hardware** - the exact command was reverse-engineered from `saic-python-client-ng`'s `start_ac`/`stop_ac`, not from a live capture against this project's own MG4. Turn the switch on, confirm the cabin fan/AC actually starts (you may need to be near the car to hear or feel it), then turn it off and confirm it stops. If it doesn't work or the tile shows "No Response", check the Homebridge debug log for the actual `/vehicle/control` response, the same way as section 4/5 above - the car may reject `rvcReqType: "6"` outright the way it did the window command, or the fan-speed/temperature values ported from the reference client may need adjusting for this vehicle/market. See `docs/API.md` for the exact request body.
+
 ### Windows — already tried, don't bother
 
 Window open/close was tested against a real MG4 (software version SWi165 - R11, Australia) and confirmed **not to work**, across several attempts: locked, unlocked with the driver's door held open, and freshly started. Every attempt got `code 8` back from the car, `"Request failed. Please check the vehicle status and try again."`, while lock, seat heat, and rear defrost all succeeded fine in the same sessions. There's no switch or config option for this, it's not exposed. The low-level request is still in `src/saic-client.js` (`controlWindow`/`WINDOW_ID`) in case a firmware update or a different vehicle behaves differently; if you try it and it works for you, an issue or PR is very welcome.
 
 ## Known gaps at this stage
 
-- Starting pre-conditioning is still read-only. It goes through `/vehicle/control` too, but with a different, unverified param set that hasn't been ported from the reference client yet.
+- Pre-conditioning is now writable, but unconfirmed against real hardware (see section 5 above) - it may turn out to need different fan-speed/temperature values, or not work at all like the window command.
 - Window open/close doesn't work, see section 5 above. Not a config option, not a bug to chase further unless you're on different hardware/firmware.
 - Only tested against a single vehicle. If your account has more than one, set the `vin` config option to pin a specific one explicitly rather than relying on "first vehicle returned."

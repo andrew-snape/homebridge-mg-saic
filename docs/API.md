@@ -207,6 +207,40 @@ Both seats are set in a single request, there's no way to change one without als
 
 Status is readable back from `basicVehicleStatus.rmtHtdRrWndSt` in `/vehicle/status`.
 
+### Cabin pre-conditioning (`rvcReqType: "6"`)
+
+**Not yet confirmed against real hardware.** The HomeKit switch this drives was read-only until now (see CHANGELOG.md) because this command hadn't been ported; the body below is ported from the reference client's `start_ac`/`stop_ac` convenience wrappers, not derived from this project's own traffic capture.
+
+To start:
+
+```json
+{
+  "rvcReqType": "6",
+  "rvcParams": [
+    { "paramId": 19,  "paramValue": "Ag==" },
+    { "paramId": 20,  "paramValue": "CA==" },
+    { "paramId": 255, "paramValue": "AAAAAA==" }
+  ],
+  "vin": "<sha256 hex of VIN>"
+}
+```
+
+To stop:
+
+```json
+{
+  "rvcReqType": "6",
+  "rvcParams": [
+    { "paramId": 19,  "paramValue": "AA==" },
+    { "paramId": 22,  "paramValue": "AA==" },
+    { "paramId": 255, "paramValue": "AAAAAA==" }
+  ],
+  "vin": "<sha256 hex of VIN>"
+}
+```
+
+Param 19 is fan speed (0-5 in the reference client), param 20 is a temperature index (`CA==` decodes to `0x08`, the reference client's own default — no documented degrees-Celsius scale), param 22 is the AC compressor on/off flag. The reference client's `start_ac` doesn't send param 22 at all (fan speed + temperature is apparently enough to engage climate); `stop_ac` sends fan speed 0 and AC off but omits the temperature param. This plugin follows that exactly rather than guessing at a fuller command. Status is readable back from `basicVehicleStatus.remoteClimateStatus`.
+
 ### Windows (`rvcReqType: "3"`) — tried, does not work
 
 Every window is named in a single request, whichever ones are marked "requested" (`0x01`) get the open/close command in param 13, the rest (`0x00`) are left alone:
@@ -246,7 +280,7 @@ Field names as returned by the API, decoded meaning based on a live capture:
 | `driverDoor`, `passengerDoor`, `rearLeftDoor`, `rearRightDoor` | `0` = closed, non-zero = open |
 | `bootStatus`, `bonnetStatus` | `0` = closed, non-zero = open |
 | `engineStatus` | `0` = off |
-| `remoteClimateStatus` | `0` = off. Read-only pre-conditioning status, not yet writable |
+| `remoteClimateStatus` | `0` = off. Drives the pre-conditioning Switch, which is writable but not yet confirmed against real hardware (see "Cabin pre-conditioning" above) |
 | `interiorTemperature`, `exteriorTemperature` | Degrees Celsius. Drives the two `TemperatureSensor` services. Occasionally seen returning -128 elsewhere in this response (tyre pressure fields) when a value isn't ready, so a client should treat implausible readings as unavailable rather than trusting them outright |
 | `mileage` | Tenths of a km |
 | `vehicleAlarmStatus` | Meaning not yet confirmed |

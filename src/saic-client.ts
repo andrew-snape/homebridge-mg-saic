@@ -423,6 +423,37 @@ export class SaicClient {
     });
   }
 
+  // ------------------------------------------------------- climate/preconditioning
+  //
+  // rvcReqType "6" is climate control. paramId 19 = fan speed (0-5), 20 = temperature index,
+  // 22 = AC compressor on/off. Ported from the reference client's own start_ac/stop_ac
+  // convenience wrappers rather than the full fan-speed/temperature range, since this plugin
+  // only exposes a plain on/off Switch: start sends fan speed 2 plus a temperature index (the
+  // reference client's own default of 8, scale not documented there either); stop sends fan
+  // speed 0 and AC off. NOT yet confirmed against real hardware - see TESTING.md.
+
+  startClimate(vin: string, temperatureIdx = 8): Promise<unknown> {
+    return this.vehicleControl(vin, {
+      rvcReqType: '6',
+      rvcParams: [
+        { paramId: 19,  paramValue: b64([2]) },
+        { paramId: 20,  paramValue: b64([temperatureIdx]) },
+        { paramId: 255, paramValue: b64([0, 0, 0, 0]) },
+      ],
+    });
+  }
+
+  stopClimate(vin: string): Promise<unknown> {
+    return this.vehicleControl(vin, {
+      rvcReqType: '6',
+      rvcParams: [
+        { paramId: 19,  paramValue: b64([0]) },
+        { paramId: 22,  paramValue: b64([0]) },
+        { paramId: 255, paramValue: b64([0, 0, 0, 0]) },
+      ],
+    });
+  }
+
   // ---------------------------------------------------------- window control
   //
   // Ported from saic_ismart_client_ng.api.vehicle.windows. rvcReqType "3" names every window in
