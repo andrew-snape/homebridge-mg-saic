@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.9.2
+
+- **The 60s timeout error now quotes the car's last actual response** instead of only saying "Timed out after 60s waiting for the vehicle". Same problem the 0.9.1 fix addressed, in the other direction: for genuinely retryable responses (`code: 4`, "The remote control instruction failed, please try again later.") the plugin correctly keeps polling, but when it eventually gave up, the car's own repeated explanation was thrown away and only visible if debug logging happened to be on. The warn-level line now reads `Timed out after 60s waiting for the vehicle (the car's last response was: ...)`, so an unreachable car looks different from a car actively refusing.
+
 ## 0.9.1
 
 - **Fixed: a control command the car explicitly rejects (`code: 8`) now fails immediately instead of retrying for the full 60s timeout.** Found from a real Homebridge log: tapping the heated seat and rear defrost switches while the car was unlocked/running got `"Vehicle not locked. Please lock it and try again."` / `"Vehicle is powered on. Please turn it off and try again."` back from the car on every single poll, identically, for a full minute, before the plugin gave up with a generic "Timed out after 60s waiting for the vehicle" - hiding the actual, useful reason the command failed. `code: 8` is now treated as a hard failure like `2`/`3`/`7`, so that real reason surfaces in the log (and in the HomeKit "command failed" state) right away.
