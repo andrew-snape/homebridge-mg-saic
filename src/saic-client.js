@@ -97,6 +97,8 @@ export class SaicClient {
     this.region = r.code;
     this.token = '';
     this.log = log ?? { info: () => {}, debug: () => {}, warn: () => {} };
+    // Stable device identifier reused across logins so the server always sees the same device.
+    this._deviceId = 'simulator*********************************************' + Math.floor(Date.now() / 1000);
     // /vehicle/control commands are serialised through this chain. Firing two at once (e.g.
     // tapping a window switch while a seat-heat switch is still mid-poll) means two independent
     // 60s event-id retry loops hit the same vehicle at once; the car appears to only track one
@@ -233,16 +235,13 @@ export class SaicClient {
   }
 
   async login(username, password) {
-    const deviceId =
-      'simulator*********************************************' + Math.floor(Date.now() / 1000);
-
     const data = await this.rawRequest('POST', '/oauth/token', {
       formBody: {
         grant_type: 'password',
         username,
         password: sha1Hex(password),
         scope: 'all',
-        deviceId: `${deviceId}###com.saicmotor.europecar`,
+        deviceId: `${this._deviceId}###com.saicmotor.europecar`,
         deviceType: '0',
         language: 'EN',
         loginType: username.includes('@') ? '2' : '1',
@@ -255,6 +254,17 @@ export class SaicClient {
     return data;
   }
 
+  /** Returns the SHA-256 hex digest of the VIN, cached by VIN string. */
+  _vinHash(vin) {
+    if (!this._vinHashCache) this._vinHashCache = new Map();
+    let h = this._vinHashCache.get(vin);
+    if (!h) {
+      h = sha256Hex(vin);
+      this._vinHashCache.set(vin, h);
+    }
+    return h;
+  }
+
   vehicleList() {
     return this.rawRequest('GET', '/vehicle/list');
   }
@@ -262,13 +272,13 @@ export class SaicClient {
   /** VIN must be hashed. Sending it raw returns the misleading error 36805. */
   vehicleStatus(vin) {
     return this.requestWithEventId('GET', '/vehicle/status', {
-      params: { vin: sha256Hex(vin), vehStatusReqType: '2' },
+      params: { vin: this._vinHash(vin), vehStatusReqType: '2' },
     });
   }
 
   chargingStatus(vin) {
     return this.requestWithEventId('GET', '/vehicle/charging/mgmtData', {
-      params: { vin: sha256Hex(vin) },
+      params: { vin: this._vinHash(vin) },
     });
   }
 
@@ -290,7 +300,7 @@ export class SaicClient {
   vehicleControl(vin, { rvcReqType, rvcParams = null }) {
     return this._enqueueControl(() =>
       this.requestWithEventId('POST', '/vehicle/control', {
-        jsonBody: { rvcReqType, rvcParams, vin: sha256Hex(vin) },
+        jsonBody: { rvcReqType, rvcParams, vin: this._vinHash(vin) },
       }),
     );
   }

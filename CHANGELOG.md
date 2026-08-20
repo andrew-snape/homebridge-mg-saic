@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.7.0
+
+Performance optimisations — no functional changes, no config changes.
+
+- `vehicleStatus` and `chargingStatus` are now fetched in parallel on each poll instead of sequentially. For a sleeping car (30 s event-id wait per call) this roughly halves the wall-clock time of every refresh cycle.
+- The SHA-256 VIN hash is now computed once and cached rather than being re-hashed on every API call (`vehicleStatus`, `chargingStatus`, `vehicleControl`).
+- The device identifier sent during login is now generated once at startup and reused across all subsequent re-logins, so the server consistently sees the same device rather than a new one on every token expiry.
+- `StatusLowBattery` is now pushed to HomeKit proactively on every charging poll (alongside `BatteryLevel` and `ChargingState`) rather than only being recomputed on an explicit HomeKit read.
+- The door-sensor field list is now a module-level constant, eliminating a redundant array allocation on every poll cycle.
+- Interior and exterior temperature cache fields are now explicitly declared properties (`_lastInteriorTemperature`, `_lastExteriorTemperature`) rather than dynamically added at runtime, avoiding hidden-class churn in V8.
+
 ## 0.6.0
 
 - **Breaking config change:** removed the `enableWindowControls` option and the four window open/close Switches. Tested against a real MG4 (software version SWi165 - R11, Australia) across several conditions — locked, unlocked with the driver's door held open, freshly started — and the car consistently rejects the command with `code 8`, `"Request failed. Please check the vehicle status and try again."`. Lock, seat heat, and rear defrost all work fine in the same sessions, so this looks like either a genuine restriction on this vehicle/software version or a precondition this project hasn't found. If you had `enableWindowControls: true` in `config.json`, it's now a harmless unused key, safe to remove. The low-level `controlWindow`/`WINDOW_ID` request is still in `src/saic-client.js`, unused, for anyone who wants to pick this up on different hardware.

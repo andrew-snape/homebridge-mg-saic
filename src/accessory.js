@@ -43,6 +43,16 @@
  * differently, but nothing in this accessory calls it. See CHANGELOG.md.
  */
 
+// Door field→service-index mapping, used in both setupContactSensors and pushStatusCharacteristics.
+const DOOR_FIELDS = [
+  ['Driver door', 'driverDoor'],
+  ['Passenger door', 'passengerDoor'],
+  ['Rear left door', 'rearLeftDoor'],
+  ['Rear right door', 'rearRightDoor'],
+  ['Boot', 'bootStatus'],
+  ['Bonnet', 'bonnetStatus'],
+];
+
 export class MgSaicAccessory {
   /**
    * @param {import('homebridge').PlatformAccessory} accessory
@@ -81,6 +91,10 @@ export class MgSaicAccessory {
     // characteristic reads for data from the other endpoint.
     this._lastStatus = null;
     this._lastCharging = null;
+    // Stable cache for the last known-good temperature values; named explicitly
+    // to avoid hidden-class churn from dynamic property assignment.
+    this._lastInteriorTemperature = null;
+    this._lastExteriorTemperature = null;
   }
 
   setupInfoService() {
@@ -145,16 +159,7 @@ export class MgSaicAccessory {
   }
 
   setupContactSensors() {
-    const doors = [
-      ['Driver door', 'driverDoor'],
-      ['Passenger door', 'passengerDoor'],
-      ['Rear left door', 'rearLeftDoor'],
-      ['Rear right door', 'rearRightDoor'],
-      ['Boot', 'bootStatus'],
-      ['Bonnet', 'bonnetStatus'],
-    ];
-
-    this.contactServices = doors.map(([name, field]) => {
+    this.contactServices = DOOR_FIELDS.map(([name, field]) => {
       const subtype = field;
       const service = this.accessory.getService(name)
         ?? this.accessory.addService(this.Service.ContactSensor, name, subtype);
@@ -250,9 +255,14 @@ export class MgSaicAccessory {
   }
 
   readTemperature(field) {
-    if (!this.isTemperatureValid(field)) return this[`_last${field}`] ?? 0;
+    if (!this.isTemperatureValid(field)) {
+      return field === 'interiorTemperature'
+        ? (this._lastInteriorTemperature ?? 0)
+        : (this._lastExteriorTemperature ?? 0);
+    }
     const value = this._lastStatus.basicVehicleStatus[field];
-    this[`_last${field}`] = value;
+    if (field === 'interiorTemperature') this._lastInteriorTemperature = value;
+    else this._lastExteriorTemperature = value;
     return value;
   }
 
@@ -357,18 +367,23 @@ export class MgSaicAccessory {
 
   /** Called by the platform on its poll interval. Pushes fresh values into HomeKit. */
   async refresh() {
-    try {
-      this._lastStatus = await this.client.vehicleStatus(this.vin);
+    const [statusResult, chargingResult] = await Promise.allSettled([
+      this.client.vehicleStatus(this.vin),
+      this.client.chargingStatus(this.vin),
+    ]);
+
+    if (statusResult.status === 'fulfilled') {
+      this._lastStatus = statusResult.value;
       this.pushStatusCharacteristics();
-    } catch (err) {
-      this.log.warn(`Status refresh failed: ${err.message}`);
+    } else {
+      this.log.warn(`Status refresh failed: ${statusResult.reason.message}`);
     }
 
-    try {
-      this._lastCharging = await this.client.chargingStatus(this.vin);
+    if (chargingResult.status === 'fulfilled') {
+      this._lastCharging = chargingResult.value;
       this.pushChargingCharacteristics();
-    } catch (err) {
-      this.log.warn(`Charging refresh failed: ${err.message}`);
+    } else {
+      this.log.warn(`Charging refresh failed: ${chargingResult.reason.message}`);
     }
   }
 
@@ -378,11 +393,7 @@ export class MgSaicAccessory {
       this.preconditionService.updateCharacteristic(this.Characteristic.On, this.readClimateOn());
     }
     if (this.enableDoorSensors) {
-      const doors = [
-        ['driverDoor', 0], ['passengerDoor', 1], ['rearLeftDoor', 2],
-        ['rearRightDoor', 3], ['bootStatus', 4], ['bonnetStatus', 5],
-      ];
-      for (const [field, i] of doors) {
+      for (const [, field, i] of DOOR_FIELDS.map(([n, f], i) => [n, f, i])) {
         this.contactServices[i].updateCharacteristic(
           this.Characteristic.ContactSensorState, this.readContactState(field),
         );
@@ -414,8 +425,15 @@ export class MgSaicAccessory {
   }
 
   pushChargingCharacteristics() {
-    this.batteryService.updateCharacteristic(this.Characteristic.BatteryLevel, this.readSoc());
+    const soc = this.readSoc();
+    this.batteryService.updateCharacteristic(this.Characteristic.BatteryLevel, soc);
     this.batteryService.updateCharacteristic(this.Characteristic.ChargingState, this.readChargingState());
+    this.batteryService.updateCharacteristic(
+      this.Characteristic.StatusLowBattery,
+      soc <= 20
+        ? this.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
+        : this.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL,
+    );
     this.outletService.updateCharacteristic(this.Characteristic.On, this.readPluggedIn());
     this.outletService.updateCharacteristic(this.Characteristic.OutletInUse, this.readCharging());
   }
