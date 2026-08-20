@@ -38,68 +38,104 @@
  * consistently rejects the command with "Request failed. Please check the
  * vehicle status and try again." regardless of lock state, door-open state,
  * or being freshly started. There's no HomeKit switch for it. The
- * low-level request is still in saic-client.js (controlWindow/WINDOW_ID)
+ * low-level request is still in saic-client.ts (controlWindow/WINDOW_ID)
  * in case a future firmware update or a different vehicle behaves
  * differently, but nothing in this accessory calls it. See CHANGELOG.md.
  */
 
-import { SaicError } from './saic-client.js';
+import type { API, PlatformAccessory, Service, Characteristic, CharacteristicValue } from 'homebridge';
+import { SaicClient, SaicError } from './saic-client.js';
 
 // Door field→service-index mapping, used in both setupContactSensors and pushStatusCharacteristics.
-const DOOR_FIELDS = [
-  ['Driver door', 'driverDoor'],
-  ['Passenger door', 'passengerDoor'],
-  ['Rear left door', 'rearLeftDoor'],
-  ['Rear right door', 'rearRightDoor'],
-  ['Boot', 'bootStatus'],
-  ['Bonnet', 'bonnetStatus'],
+const DOOR_FIELDS: [string, string][] = [
+  ['Driver door',      'driverDoor'],
+  ['Passenger door',   'passengerDoor'],
+  ['Rear left door',   'rearLeftDoor'],
+  ['Rear right door',  'rearRightDoor'],
+  ['Boot',             'bootStatus'],
+  ['Bonnet',           'bonnetStatus'],
 ];
 
+export interface AccessoryOpts {
+  vin: string;
+  log: { info(m: string): void; warn(m: string): void; debug(m: string): void };
+  api: API;
+  enablePreconditioning: boolean;
+  enableDoorSensors: boolean;
+  enableTemperatureSensors: boolean;
+  enableHeatedSeats: boolean;
+  enableRearDefrost: boolean;
+}
+
+// Loosely typed shapes returned by the SAIC API endpoints.
+type StatusData    = Record<string, unknown>;
+type ChargingData  = Record<string, unknown>;
+type BasicStatus   = Record<string, unknown>;
+type ChrgMgmtData  = Record<string, unknown>;
+
 export class MgSaicAccessory {
-  /**
-   * @param {import('homebridge').PlatformAccessory} accessory
-   * @param {import('./saic-client.js').SaicClient} client
-   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean, enableTemperatureSensors: boolean, enableHeatedSeats: boolean, enableRearDefrost: boolean }} opts
-   */
-  constructor(accessory, client, {
+  private accessory: PlatformAccessory;
+  private client: SaicClient;
+  vin: string;
+  private log: AccessoryOpts['log'];
+  private api: API;
+  private Service: typeof Service;
+  private Characteristic: typeof Characteristic;
+
+  private enablePreconditioning: boolean;
+  private enableDoorSensors: boolean;
+  private enableTemperatureSensors: boolean;
+  private enableHeatedSeats: boolean;
+  private enableRearDefrost: boolean;
+
+  private batteryService!: Service;
+  private lockService!: Service;
+  private outletService!: Service;
+  private preconditionService?: Service;
+  private contactServices?: Service[];
+  private interiorTempService?: Service;
+  private exteriorTempService?: Service;
+  private leftSeatHeatService?: Service;
+  private rightSeatHeatService?: Service;
+  private rearDefrostService?: Service;
+
+  private _lastStatus:  StatusData   | null = null;
+  private _lastCharging: ChargingData | null = null;
+  // Stable cache for the last known-good temperature values; named explicitly
+  // to avoid hidden-class churn from dynamic property assignment.
+  private _lastInteriorTemperature: number | null = null;
+  private _lastExteriorTemperature: number | null = null;
+
+  constructor(accessory: PlatformAccessory, client: SaicClient, {
     vin, log, api, enablePreconditioning, enableDoorSensors, enableTemperatureSensors,
     enableHeatedSeats, enableRearDefrost,
-  }) {
-    this.accessory = accessory;
-    this.client = client;
-    this.vin = vin;
-    this.log = log;
-    this.api = api;
-    this.Service = api.hap.Service;
-    this.Characteristic = api.hap.Characteristic;
+  }: AccessoryOpts) {
+    this.accessory   = accessory;
+    this.client      = client;
+    this.vin         = vin;
+    this.log         = log;
+    this.api         = api;
+    this.Service         = api.hap.Service;
+    this.Characteristic  = api.hap.Characteristic;
 
-    this.enablePreconditioning = enablePreconditioning;
-    this.enableDoorSensors = enableDoorSensors;
+    this.enablePreconditioning    = enablePreconditioning;
+    this.enableDoorSensors        = enableDoorSensors;
     this.enableTemperatureSensors = enableTemperatureSensors;
-    this.enableHeatedSeats = enableHeatedSeats;
-    this.enableRearDefrost = enableRearDefrost;
+    this.enableHeatedSeats        = enableHeatedSeats;
+    this.enableRearDefrost        = enableRearDefrost;
 
     this.setupInfoService();
     this.setupBatteryService();
     this.setupLockService();
     this.setupOutletService();
-    if (this.enablePreconditioning) this.setupPreconditioningSwitch();
-    if (this.enableDoorSensors) this.setupContactSensors();
+    if (this.enablePreconditioning)    this.setupPreconditioningSwitch();
+    if (this.enableDoorSensors)        this.setupContactSensors();
     if (this.enableTemperatureSensors) this.setupTemperatureSensors();
-    if (this.enableHeatedSeats) this.setupHeatedSeatSwitches();
-    if (this.enableRearDefrost) this.setupRearDefrostSwitch();
-
-    // Cached latest reads, so a slow poll of one endpoint doesn't block
-    // characteristic reads for data from the other endpoint.
-    this._lastStatus = null;
-    this._lastCharging = null;
-    // Stable cache for the last known-good temperature values; named explicitly
-    // to avoid hidden-class churn from dynamic property assignment.
-    this._lastInteriorTemperature = null;
-    this._lastExteriorTemperature = null;
+    if (this.enableHeatedSeats)        this.setupHeatedSeatSwitches();
+    if (this.enableRearDefrost)        this.setupRearDefrostSwitch();
   }
 
-  setupInfoService() {
+  setupInfoService(): void {
     const info = this.accessory.getService(this.Service.AccessoryInformation)
       ?? this.accessory.addService(this.Service.AccessoryInformation);
     info
@@ -108,7 +144,7 @@ export class MgSaicAccessory {
       .setCharacteristic(this.Characteristic.SerialNumber, this.vin || 'unknown-vin');
   }
 
-  setupBatteryService() {
+  setupBatteryService(): void {
     this.batteryService = this.accessory.getService(this.Service.Battery)
       ?? this.accessory.addService(this.Service.Battery);
 
@@ -124,7 +160,7 @@ export class MgSaicAccessory {
         : this.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL));
   }
 
-  setupLockService() {
+  setupLockService(): void {
     this.lockService = this.accessory.getService(this.Service.LockMechanism)
       ?? this.accessory.addService(this.Service.LockMechanism);
 
@@ -135,10 +171,10 @@ export class MgSaicAccessory {
       .onGet(() => (this.readLockState() === this.Characteristic.LockCurrentState.SECURED
         ? this.Characteristic.LockTargetState.SECURED
         : this.Characteristic.LockTargetState.UNSECURED))
-      .onSet((value) => this.setLockTarget(value));
+      .onSet((value) => this.setLockTarget(value as CharacteristicValue));
   }
 
-  setupOutletService() {
+  setupOutletService(): void {
     this.outletService = this.accessory.getService(this.Service.Outlet)
       ?? this.accessory.addService(this.Service.Outlet);
 
@@ -149,7 +185,7 @@ export class MgSaicAccessory {
       .onGet(() => this.readCharging());
   }
 
-  setupPreconditioningSwitch() {
+  setupPreconditioningSwitch(): void {
     this.preconditionService = this.accessory.getService('Pre-conditioning')
       ?? this.accessory.addService(this.Service.Switch, 'Pre-conditioning', 'preconditioning');
 
@@ -160,7 +196,7 @@ export class MgSaicAccessory {
     // for now, deliberately, rather than silently no-op-ing a write.
   }
 
-  setupContactSensors() {
+  setupContactSensors(): void {
     this.contactServices = DOOR_FIELDS.map(([name, field]) => {
       const subtype = field;
       const service = this.accessory.getService(name)
@@ -171,7 +207,7 @@ export class MgSaicAccessory {
     });
   }
 
-  setupTemperatureSensors() {
+  setupTemperatureSensors(): void {
     this.interiorTempService = this.accessory.getService('Interior temperature')
       ?? this.accessory.addService(this.Service.TemperatureSensor, 'Interior temperature', 'interiorTemperature');
     this.interiorTempService.getCharacteristic(this.Characteristic.CurrentTemperature)
@@ -189,60 +225,72 @@ export class MgSaicAccessory {
       .onGet(() => this.readTemperatureFault('exteriorTemperature'));
   }
 
-  setupHeatedSeatSwitches() {
+  setupHeatedSeatSwitches(): void {
     this.leftSeatHeatService = this.accessory.getService('Left seat heat')
       ?? this.accessory.addService(this.Service.Switch, 'Left seat heat', 'leftSeatHeat');
     this.leftSeatHeatService.getCharacteristic(this.Characteristic.On)
       .onGet(() => this.readSeatHeat('frontLeftSeatHeatLevel'))
-      .onSet((value) => this.setSeatHeat('left', value));
+      .onSet((value) => this.setSeatHeat('left', value as boolean));
 
     this.rightSeatHeatService = this.accessory.getService('Right seat heat')
       ?? this.accessory.addService(this.Service.Switch, 'Right seat heat', 'rightSeatHeat');
     this.rightSeatHeatService.getCharacteristic(this.Characteristic.On)
       .onGet(() => this.readSeatHeat('frontRightSeatHeatLevel'))
-      .onSet((value) => this.setSeatHeat('right', value));
+      .onSet((value) => this.setSeatHeat('right', value as boolean));
   }
 
-  setupRearDefrostSwitch() {
+  setupRearDefrostSwitch(): void {
     this.rearDefrostService = this.accessory.getService('Rear window defrost')
       ?? this.accessory.addService(this.Service.Switch, 'Rear window defrost', 'rearDefrost');
     this.rearDefrostService.getCharacteristic(this.Characteristic.On)
-      .onGet(() => Boolean(this._lastStatus?.basicVehicleStatus?.rmtHtdRrWndSt))
-      .onSet((value) => this.setRearDefrost(value));
+      .onGet(() => Boolean(this.basicStatus()?.['rmtHtdRrWndSt']))
+      .onSet((value) => this.setRearDefrost(value as boolean));
   }
 
   // ------------------------------------------------------------- data reads
 
-  readSoc() {
-    const soc = this._lastCharging?.chrgMgmtData?.bmsPackSOCDsp;
+  private basicStatus(): BasicStatus | undefined {
+    return (this._lastStatus as { basicVehicleStatus?: BasicStatus } | null)?.basicVehicleStatus;
+  }
+
+  private chrgMgmtData(): ChrgMgmtData | undefined {
+    return (this._lastCharging as { chrgMgmtData?: ChrgMgmtData } | null)?.chrgMgmtData;
+  }
+
+  readSoc(): number {
+    const soc = this.chrgMgmtData()?.['bmsPackSOCDsp'] as number | undefined;
     if (soc === undefined || soc === null) return 0;
     return Math.max(0, Math.min(100, soc / 10));
   }
 
-  readChargingState() {
-    const charging = this._lastCharging?.chrgMgmtData?.bmsChrgSts;
-    return charging ? this.Characteristic.ChargingState.CHARGING : this.Characteristic.ChargingState.NOT_CHARGING;
+  readChargingState(): CharacteristicValue {
+    const charging = this.chrgMgmtData()?.['bmsChrgSts'];
+    return charging
+      ? this.Characteristic.ChargingState.CHARGING
+      : this.Characteristic.ChargingState.NOT_CHARGING;
   }
 
-  readPluggedIn() {
-    return Boolean(this._lastCharging?.chrgMgmtData?.ccuOnbdChrgrPlugOn);
+  readPluggedIn(): boolean {
+    return Boolean(this.chrgMgmtData()?.['ccuOnbdChrgrPlugOn']);
   }
 
-  readCharging() {
-    return Boolean(this._lastCharging?.chrgMgmtData?.bmsChrgSts);
+  readCharging(): boolean {
+    return Boolean(this.chrgMgmtData()?.['bmsChrgSts']);
   }
 
-  readLockState() {
-    const locked = this._lastStatus?.basicVehicleStatus?.lockStatus;
-    return locked ? this.Characteristic.LockCurrentState.SECURED : this.Characteristic.LockCurrentState.UNSECURED;
+  readLockState(): CharacteristicValue {
+    const locked = this.basicStatus()?.['lockStatus'];
+    return locked
+      ? this.Characteristic.LockCurrentState.SECURED
+      : this.Characteristic.LockCurrentState.UNSECURED;
   }
 
-  readClimateOn() {
-    return Boolean(this._lastStatus?.basicVehicleStatus?.remoteClimateStatus);
+  readClimateOn(): boolean {
+    return Boolean(this.basicStatus()?.['remoteClimateStatus']);
   }
 
-  readContactState(field) {
-    const value = this._lastStatus?.basicVehicleStatus?.[field];
+  readContactState(field: string): CharacteristicValue {
+    const value = this.basicStatus()?.[field];
     return value
       ? this.Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
       : this.Characteristic.ContactSensorState.CONTACT_DETECTED;
@@ -251,42 +299,40 @@ export class MgSaicAccessory {
   /** true when the API returned a plausible temperature rather than an
    * unavailable-field sentinel (-128 has been observed on other fields
    * in the same response, e.g. tyre pressures, when a value isn't ready). */
-  isTemperatureValid(field) {
-    const value = this._lastStatus?.basicVehicleStatus?.[field];
+  isTemperatureValid(field: string): boolean {
+    const value = this.basicStatus()?.[field];
     return typeof value === 'number' && value > -60 && value < 80;
   }
 
-  readTemperature(field) {
+  readTemperature(field: string): number {
     if (!this.isTemperatureValid(field)) {
       return field === 'interiorTemperature'
         ? (this._lastInteriorTemperature ?? 0)
         : (this._lastExteriorTemperature ?? 0);
     }
-    const value = this._lastStatus.basicVehicleStatus[field];
+    const value = this.basicStatus()![field] as number;
     if (field === 'interiorTemperature') this._lastInteriorTemperature = value;
-    else this._lastExteriorTemperature = value;
+    else                                  this._lastExteriorTemperature = value;
     return value;
   }
 
-  readTemperatureFault(field) {
+  readTemperatureFault(field: string): CharacteristicValue {
     return this.isTemperatureValid(field)
       ? this.Characteristic.StatusFault.NO_FAULT
       : this.Characteristic.StatusFault.GENERAL_FAULT;
   }
 
-  readSeatHeat(field) {
-    return Boolean(this._lastStatus?.basicVehicleStatus?.[field]);
+  readSeatHeat(field: string): boolean {
+    return Boolean(this.basicStatus()?.[field]);
   }
 
   // --------------------------------------------------------------- lock write
 
   /**
-   * Handles a HomeKit lock/unlock request. Unverified against real hardware,
-   * see TESTING.md: this is the request shape from the reference client, run
-   * through the same signing and event-id polling as every read call, but
-   * nobody has watched a real MG4 respond to it yet.
+   * Handles a HomeKit lock/unlock request. Confirmed working against real
+   * hardware. See CHANGELOG.md for history.
    */
-  async setLockTarget(value) {
+  async setLockTarget(value: CharacteristicValue): Promise<void> {
     const wantLocked = value === this.Characteristic.LockTargetState.SECURED;
     this.log.info(`${wantLocked ? 'Locking' : 'Unlocking'} the MG4 via HomeKit...`);
 
@@ -299,18 +345,18 @@ export class MgSaicAccessory {
       // lock state when present, so reflect it immediately rather than
       // waiting for the next poll. If it's missing, patch just the lock bit
       // optimistically; the next poll corrects it either way.
-      const freshStatus = result?.basicVehicleStatus;
+      const freshStatus = (result as StatusData | undefined)?.['basicVehicleStatus'] as BasicStatus | undefined;
       this._lastStatus = {
         ...this._lastStatus,
         basicVehicleStatus: freshStatus ?? {
-          ...this._lastStatus?.basicVehicleStatus,
+          ...this.basicStatus(),
           lockStatus: wantLocked ? 1 : 0,
         },
       };
       this.lockService.updateCharacteristic(this.Characteristic.LockCurrentState, this.readLockState());
       this.log.info(`${wantLocked ? 'Lock' : 'Unlock'} command succeeded.`);
     } catch (err) {
-      this.log.warn(`${wantLocked ? 'Lock' : 'Unlock'} command failed: ${err.message}`);
+      this.log.warn(`${wantLocked ? 'Lock' : 'Unlock'} command failed: ${(err as Error).message}`);
       this.lockService.updateCharacteristic(
         this.Characteristic.LockCurrentState,
         this.Characteristic.LockCurrentState.JAMMED,
@@ -326,10 +372,10 @@ export class MgSaicAccessory {
    * single request, so this sends the other seat's last known level along
    * with the one actually being changed, rather than clobbering it to off.
    */
-  async setSeatHeat(side, value) {
+  async setSeatHeat(side: 'left' | 'right', value: boolean): Promise<void> {
     const otherField = side === 'left' ? 'frontRightSeatHeatLevel' : 'frontLeftSeatHeatLevel';
-    const otherOn = Boolean(this._lastStatus?.basicVehicleStatus?.[otherField]);
-    const leftLevel = side === 'left' ? (value ? 3 : 0) : (otherOn ? 3 : 0);
+    const otherOn    = Boolean(this.basicStatus()?.[otherField]);
+    const leftLevel  = side === 'left'  ? (value ? 3 : 0) : (otherOn ? 3 : 0);
     const rightLevel = side === 'right' ? (value ? 3 : 0) : (otherOn ? 3 : 0);
     this.log.info(`Setting seat heat via HomeKit: left=${leftLevel ? 'on' : 'off'} right=${rightLevel ? 'on' : 'off'}`);
 
@@ -338,29 +384,29 @@ export class MgSaicAccessory {
       this._lastStatus = {
         ...this._lastStatus,
         basicVehicleStatus: {
-          ...this._lastStatus?.basicVehicleStatus,
-          frontLeftSeatHeatLevel: leftLevel,
+          ...this.basicStatus(),
+          frontLeftSeatHeatLevel:  leftLevel,
           frontRightSeatHeatLevel: rightLevel,
         },
       };
       this.log.info('Seat heat command succeeded.');
     } catch (err) {
-      this.log.warn(`Seat heat command failed: ${err.message}`);
+      this.log.warn(`Seat heat command failed: ${(err as Error).message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
 
-  async setRearDefrost(value) {
+  async setRearDefrost(value: boolean): Promise<void> {
     this.log.info(`${value ? 'Starting' : 'Stopping'} rear window defrost via HomeKit...`);
     try {
       await this.client.controlRearWindowHeat(this.vin, value);
       this._lastStatus = {
         ...this._lastStatus,
-        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, rmtHtdRrWndSt: value ? 1 : 0 },
+        basicVehicleStatus: { ...this.basicStatus(), rmtHtdRrWndSt: value ? 1 : 0 },
       };
       this.log.info('Rear defrost command succeeded.');
     } catch (err) {
-      this.log.warn(`Rear defrost command failed: ${err.message}`);
+      this.log.warn(`Rear defrost command failed: ${(err as Error).message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
@@ -368,7 +414,7 @@ export class MgSaicAccessory {
   // ---------------------------------------------------------------- polling
 
   /** Called by the platform on its poll interval. Pushes fresh values into HomeKit. */
-  async refresh() {
+  async refresh(): Promise<void> {
     const [statusResult, chargingResult] = await Promise.allSettled([
       this.client.vehicleStatus(this.vin),
       this.client.chargingStatus(this.vin),
@@ -378,39 +424,39 @@ export class MgSaicAccessory {
     // Check both results; if either is an auth error, surface it.
     for (const result of [statusResult, chargingResult]) {
       if (result.status === 'rejected') {
-        const err = result.reason;
+        const err = result.reason as Error;
         if (err instanceof SaicError && (err.code === 401 || err.code === 403)) throw err;
       }
     }
 
     if (statusResult.status === 'fulfilled') {
-      this._lastStatus = statusResult.value;
+      this._lastStatus = statusResult.value as StatusData;
       this.pushStatusCharacteristics();
     } else {
-      this.log.warn(`Status refresh failed: ${statusResult.reason.message}`);
+      this.log.warn(`Status refresh failed: ${(statusResult.reason as Error).message}`);
     }
 
     if (chargingResult.status === 'fulfilled') {
-      this._lastCharging = chargingResult.value;
+      this._lastCharging = chargingResult.value as ChargingData;
       this.pushChargingCharacteristics();
     } else {
-      this.log.warn(`Charging refresh failed: ${chargingResult.reason.message}`);
+      this.log.warn(`Charging refresh failed: ${(chargingResult.reason as Error).message}`);
     }
   }
 
-  pushStatusCharacteristics() {
+  pushStatusCharacteristics(): void {
     this.lockService.updateCharacteristic(this.Characteristic.LockCurrentState, this.readLockState());
-    if (this.enablePreconditioning) {
+    if (this.enablePreconditioning && this.preconditionService) {
       this.preconditionService.updateCharacteristic(this.Characteristic.On, this.readClimateOn());
     }
-    if (this.enableDoorSensors) {
-      for (const [, field, i] of DOOR_FIELDS.map(([n, f], i) => [n, f, i])) {
+    if (this.enableDoorSensors && this.contactServices) {
+      for (const [[, field], i] of DOOR_FIELDS.map((entry, idx) => [entry, idx] as const)) {
         this.contactServices[i].updateCharacteristic(
           this.Characteristic.ContactSensorState, this.readContactState(field),
         );
       }
     }
-    if (this.enableTemperatureSensors) {
+    if (this.enableTemperatureSensors && this.interiorTempService && this.exteriorTempService) {
       this.interiorTempService.updateCharacteristic(
         this.Characteristic.CurrentTemperature, this.readTemperature('interiorTemperature'),
       );
@@ -424,18 +470,18 @@ export class MgSaicAccessory {
         this.Characteristic.StatusFault, this.readTemperatureFault('exteriorTemperature'),
       );
     }
-    if (this.enableHeatedSeats) {
+    if (this.enableHeatedSeats && this.leftSeatHeatService && this.rightSeatHeatService) {
       this.leftSeatHeatService.updateCharacteristic(this.Characteristic.On, this.readSeatHeat('frontLeftSeatHeatLevel'));
       this.rightSeatHeatService.updateCharacteristic(this.Characteristic.On, this.readSeatHeat('frontRightSeatHeatLevel'));
     }
-    if (this.enableRearDefrost) {
+    if (this.enableRearDefrost && this.rearDefrostService) {
       this.rearDefrostService.updateCharacteristic(
-        this.Characteristic.On, Boolean(this._lastStatus?.basicVehicleStatus?.rmtHtdRrWndSt),
+        this.Characteristic.On, Boolean(this.basicStatus()?.['rmtHtdRrWndSt']),
       );
     }
   }
 
-  pushChargingCharacteristics() {
+  pushChargingCharacteristics(): void {
     const soc = this.readSoc();
     this.batteryService.updateCharacteristic(this.Characteristic.BatteryLevel, soc);
     this.batteryService.updateCharacteristic(this.Characteristic.ChargingState, this.readChargingState());

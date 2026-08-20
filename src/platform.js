@@ -1,4 +1,4 @@
-import { SaicClient } from './saic-client.js';
+import { SaicClient, SaicError } from './saic-client.js';
 import { MgSaicAccessory } from './accessory.js';
 
 const PLUGIN_NAME = 'homebridge-mg-saic';
@@ -31,7 +31,7 @@ export class MgSaicPlatform {
     this.pollIntervalMs = Math.max(5, config.pollIntervalMinutes ?? 15) * 60 * 1000;
     this.enablePreconditioning = config.enablePreconditioning ?? true;
     this.enableDoorSensors = config.enableDoorSensors ?? true;
-    this.enableTemperatureSensors = config.enableTemperatureSensors ?? true;
+    this.enableTemperatureSensors = config.enableTemperatureSensors ?? false;
     // Off by default: writable controls not yet confirmed against real hardware when this
     // was written (unlike lock/unlock). See TESTING.md before turning them on. There is no
     // equivalent enableWindowControls option: window open/close was tried and confirmed not
@@ -109,15 +109,32 @@ export class MgSaicPlatform {
   startPolling() {
     const poll = async () => {
       if (!this.vehicle) return;
+
+      // Ensure we are logged in before polling. If the token has been cleared
+      // by a 401/403 response, re-login here rather than waiting for the next
+      // tick so the very next poll still gets fresh data.
       if (!this.client.isLoggedIn) {
         try {
           await this.client.login(this.config.username, this.password);
+          this.log.info('Re-logged in to the SAIC gateway.');
         } catch (err) {
           this.log.warn(`Re-login failed: ${err.message}`);
           return;
         }
       }
-      await this.vehicle.refresh();
+
+      try {
+        await this.vehicle.refresh();
+      } catch (err) {
+        // If the refresh itself surfaced a 401/403 (token expired mid-poll),
+        // clear the token so the next poll cycle re-logs in automatically.
+        if (err instanceof SaicError && (err.code === 401 || err.code === 403)) {
+          this.log.warn('Session expired during refresh — will re-login on next poll.');
+          this.client.token = '';
+        } else {
+          this.log.warn(`Refresh failed: ${err.message}`);
+        }
+      }
     };
 
     // First poll shortly after startup, then on the configured interval.
