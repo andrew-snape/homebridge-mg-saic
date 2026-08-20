@@ -164,7 +164,15 @@ Straightforward on/off. Turn it on, confirm the rear windscreen's heating elemen
 
 ### Pre-conditioning
 
-Ported from the reference client but **not yet confirmed against real hardware** - the exact command was reverse-engineered from `saic-python-client-ng`'s `start_ac`/`stop_ac`, not from a live capture against this project's own MG4. Lock the car and turn the ignition off first (see the heated seats/rear defrost note above - the same `code: 8` vehicle-state rejection is very likely to apply here too). Turn the switch on, confirm the cabin fan/AC actually starts (you may need to be near the car to hear or feel it), then turn it off and confirm it stops. If it doesn't work or the tile shows "No Response", check the Homebridge debug log for the actual `/vehicle/control` response, the same way as section 4/5 above - the car may reject `rvcReqType: "6"` outright the way it did the window command, or the fan-speed/temperature values ported from the reference client may need adjusting for this vehicle/market. See `docs/API.md` for the exact request body.
+**Confirmed working** against a real MG4 (software version SWi165 - R11, Australia) as of 0.9.4. Starting it from HomeKit took about 16 seconds and three polls — through two transient `code: 4` responses — before returning `code: 0` with `failureType=0`, and it physically ran the climate system.
+
+**It ran the heater, and that is expected.** The switch asks the car for a fixed 22 °C (temperature index 8) and never sends the compressor flag, and the MG4 heats with the compressor off. So it drives toward 22 °C using the PTC resistive heater. On a cold morning that's the desired behaviour; there is currently no way to cool, and no way to pick a temperature. `docs/API.md` has the index-to-°C formula, the compressor flag, and the fan-speed range — read it before changing any of these values, because fan-speed bytes 4 and 5 are not "higher fan", they put the car into heating/front defrost.
+
+**This is not the "pre-drive" feature** in the newer iSmart phone apps. That's something else, and it has not been reverse-engineered by this project, the reference client, or the Home Assistant integration. Implementing it would need a fresh traffic capture from a current app.
+
+Still untested: the **stop** path. Turn the switch off and confirm the car actually stops, and that `remoteClimateStatus` returns to `0`.
+
+As with the other control commands, lock the car and turn the ignition off first (see the heated seats/rear defrost note above — the same `code: 8` vehicle-state rejection is likely to apply here too).
 
 ### Windows — already tried, don't bother
 
@@ -181,6 +189,7 @@ This was observed for roughly 45 minutes straight, across several Homebridge res
 
 ## Known gaps at this stage
 
-- Pre-conditioning is now writable, but unconfirmed against real hardware (see section 5 above) - it may turn out to need different fan-speed/temperature values, or not work at all like the window command.
+- Pre-conditioning works, but only as a fixed 22 °C heat (see section 5 above). No cooling, no temperature choice, and the stop path is still unexercised. A HomeKit `HeaterCooler`/`Thermostat` service could expose real temperature control now that the index-to-°C mapping is known — see `docs/API.md`.
+- The newer iSmart apps' "pre-drive" feature is not implemented and not reverse-engineered anywhere; it would need a fresh traffic capture.
 - Window open/close doesn't work, see section 5 above. Not a config option, not a bug to chase further unless you're on different hardware/firmware.
 - Only tested against a single vehicle. If your account has more than one, set the `vin` config option to pin a specific one explicitly rather than relying on "first vehicle returned."

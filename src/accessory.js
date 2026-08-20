@@ -28,7 +28,9 @@
  * Heated seats, rear defrost and cabin pre-conditioning are writable
  * Switches, same as LockMechanism. Heated seats/rear defrost are confirmed
  * working against real hardware; pre-conditioning is wired to
- * /vehicle/control (rvcReqType "6") but NOT yet confirmed - see TESTING.md.
+ * /vehicle/control (rvcReqType "6"), confirmed working in 0.9.4. Note it asks
+ * for a fixed 22C with the compressor off, which on an MG4 means heat - see
+ * docs/API.md before changing the fan/temperature values.
  * Heated seats/rear defrost are off by default (enableHeatedSeats/
  * enableRearDefrost default to false) until tested. Seat heat is labelled by
  * physical side (left/right) rather than driver/passenger, since the status

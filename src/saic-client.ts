@@ -418,7 +418,7 @@ export class SaicClient {
   // by /vehicle/status are positional - frontLeftSeatHeatLevel / frontRightSeatHeatLevel - so
   // this client uses left/right throughout to sidestep the LHD/RHD ambiguity of "driver").
   // rvcReqType "32" is the separate rear window defrost command (paramId 23, one byte on/off).
-  // NOT yet confirmed against real hardware - see the plugin's TESTING.md.
+  // Confirmed working against a real MG4 - see the plugin's TESTING.md.
 
   /** level is 0-3 per the reference client (0 = off); this plugin only ever sends 0 or 3. */
   controlHeatedSeats(vin: string, { leftLevel = 0, rightLevel = 0 }: { leftLevel?: number; rightLevel?: number } = {}): Promise<unknown> {
@@ -449,7 +449,9 @@ export class SaicClient {
   // convenience wrappers rather than the full fan-speed/temperature range, since this plugin
   // only exposes a plain on/off Switch: start sends fan speed 2 plus a temperature index (the
   // reference client's own default of 8, scale not documented there either); stop sends fan
-  // speed 0 and AC off. NOT yet confirmed against real hardware - see TESTING.md.
+  // speed 0 and AC off. Confirmed working on a real MG4: index 8 is 22C and, with no
+  // compressor flag sent, the car heats to it. docs/API.md has the full index/fan mapping;
+  // fan bytes 4 and 5 are NOT higher fan speeds, they trigger heat/front-defrost.
 
   startClimate(vin: string, temperatureIdx = 8): Promise<unknown> {
     return this.vehicleControl(vin, {
