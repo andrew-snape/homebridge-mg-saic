@@ -92,6 +92,8 @@ function makeAccessory() {
     unlockVehicle: vi.fn(),
     controlHeatedSeats: vi.fn(),
     controlRearWindowHeat: vi.fn(),
+    startClimate: vi.fn(),
+    stopClimate: vi.fn(),
   };
 
   const api = {
@@ -274,5 +276,35 @@ describe('readClimateOn', () => {
     const { acc } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 1 } };
     expect(acc.readClimateOn()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setPreconditioning
+// ---------------------------------------------------------------------------
+
+describe('setPreconditioning', () => {
+  it('calls startClimate and reflects the new state when turning on', async () => {
+    const { acc, client } = makeAccessory();
+    client.startClimate.mockResolvedValue({});
+    await acc.setPreconditioning(true);
+    expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123');
+    expect(acc.readClimateOn()).toBe(true);
+  });
+
+  it('calls stopClimate and reflects the new state when turning off', async () => {
+    const { acc, client } = makeAccessory();
+    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 1 } };
+    client.stopClimate.mockResolvedValue({});
+    await acc.setPreconditioning(false);
+    expect(client.stopClimate).toHaveBeenCalledWith('TESTVIN123');
+    expect(acc.readClimateOn()).toBe(false);
+  });
+
+  it('throws a HapStatusError and leaves state unchanged when the command fails', async () => {
+    const { acc, client } = makeAccessory();
+    client.startClimate.mockRejectedValue(new Error('timeout'));
+    await expect(acc.setPreconditioning(true)).rejects.toThrow('HapStatusError');
+    expect(acc.readClimateOn()).toBe(false);
   });
 });

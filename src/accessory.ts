@@ -25,11 +25,14 @@
  * it can't report (see tyre pressure fields in a live capture), so both
  * readers treat implausible values as a fault rather than trusting them.
  *
- * Heated seats and rear defrost are writable Switches, same as
- * LockMechanism, confirmed working against real hardware. Off by default
- * (enableHeatedSeats/enableRearDefrost default to false) until tested - see
- * TESTING.md. Seat heat is labelled by physical side (left/right) rather
- * than driver/passenger, since the status API uses positional field names
+ * Heated seats, rear defrost and cabin pre-conditioning are writable
+ * Switches, same as LockMechanism. Heated seats/rear defrost are confirmed
+ * working against real hardware; pre-conditioning is wired to
+ * /vehicle/control (rvcReqType "6") but NOT yet confirmed - see TESTING.md.
+ * Heated seats/rear defrost are off by default (enableHeatedSeats/
+ * enableRearDefrost default to false) until tested. Seat heat is labelled by
+ * physical side (left/right) rather than driver/passenger, since the status
+ * API uses positional field names
  * (frontLeftSeatHeatLevel) while the reference client's own naming is
  * functional (driver/passenger) - conflating the two would risk labelling
  * the wrong seat depending on market.
@@ -190,10 +193,8 @@ export class MgSaicAccessory {
       ?? this.accessory.addService(this.Service.Switch, 'Pre-conditioning', 'preconditioning');
 
     this.preconditionService.getCharacteristic(this.Characteristic.On)
-      .onGet(() => this.readClimateOn());
-    // Control (setting the switch on) is not wired to /vehicle/control yet;
-    // that endpoint hasn't been exercised against real hardware. Read-only
-    // for now, deliberately, rather than silently no-op-ing a write.
+      .onGet(() => this.readClimateOn())
+      .onSet((value) => this.setPreconditioning(value as boolean));
   }
 
   setupContactSensors(): void {
@@ -392,6 +393,30 @@ export class MgSaicAccessory {
       this.log.info('Seat heat command succeeded.');
     } catch (err) {
       this.log.warn(`Seat heat command failed: ${(err as Error).message}`);
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  /**
+   * Handles a HomeKit pre-conditioning toggle. Previously this switch's On
+   * characteristic had no onSet at all: HomeKit accepted the tap locally, but
+   * nothing was actually sent to the car, so the tile silently reverted to
+   * the real (unchanged) state on the next poll. Wired to /vehicle/control
+   * now, same pattern as setSeatHeat/setRearDefrost, but NOT yet confirmed
+   * against real hardware - see TESTING.md before relying on it.
+   */
+  async setPreconditioning(value: boolean): Promise<void> {
+    this.log.info(`${value ? 'Starting' : 'Stopping'} cabin pre-conditioning via HomeKit...`);
+    try {
+      if (value) await this.client.startClimate(this.vin);
+      else       await this.client.stopClimate(this.vin);
+      this._lastStatus = {
+        ...this._lastStatus,
+        basicVehicleStatus: { ...this.basicStatus(), remoteClimateStatus: value ? 1 : 0 },
+      };
+      this.log.info('Pre-conditioning command succeeded.');
+    } catch (err) {
+      this.log.warn(`Pre-conditioning command failed: ${(err as Error).message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
