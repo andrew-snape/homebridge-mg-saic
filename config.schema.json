@@ -54,9 +54,10 @@
         "description": "SAIC's gateway can pause an account for 15 minutes if it sees too many logins. 15 minutes is the documented safe default."
       },
       "enablePreconditioning": {
-        "title": "Expose cabin pre-conditioning switch",
+        "title": "Expose cabin pre-conditioning (aircon) switch",
         "type": "boolean",
-        "default": true
+        "default": true,
+        "description": "This is the remote aircon / climate control. Writable since 0.9.0, but not yet confirmed against real hardware, see TESTING.md. With this off you get no switch in the Home app at all; the startup log lists which services were exposed."
       },
       "enableDoorSensors": {
         "title": "Expose door / boot / bonnet contact sensors",
