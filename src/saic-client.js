@@ -204,7 +204,14 @@ export class SaicClient {
       this.token = '';
       throw new SaicError(`Logged out: ${message}`, code);
     }
-    if ([2, 3, 7].includes(code)) throw new SaicError(message, code);
+    // code 8 was originally left out of this list and fell through to the generic retry-with-
+    // same-event-id path below. A real Homebridge log (see TESTING.md) showed that's wrong: a
+    // control command rejected for a vehicle-state precondition (e.g. "Vehicle not locked.
+    // Please lock it and try again.", "Vehicle is powered on. Please turn it off and try
+    // again.") comes back with an identical code 8 and message on every single poll for the
+    // full 60s window, never resolving - so retrying just delays a fixed rejection behind a
+    // misleading "Timed out after 60s" instead of surfacing the car's actual reason immediately.
+    if ([2, 3, 7, 8].includes(code)) throw new SaicError(message, code);
 
     // Async pattern: an event-id with no data means "ask again with this id".
     if (respEventId && json.data === undefined) {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SaicClient, SaicError } from '../src/saic-client.js';
 
 // ---------------------------------------------------------------------------
@@ -151,6 +151,36 @@ describe('SaicError', () => {
     expect(err.code).toBe(401);
     expect(err.name).toBe('SaicError');
     expect(err instanceof Error).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// code 8 vehicle-state rejections fail fast instead of retrying for 60s
+// ---------------------------------------------------------------------------
+
+describe('rawRequest / requestWithEventId - code 8', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects immediately, without retrying, on a code 8 response', async () => {
+    const client = makeClient();
+    const body = JSON.stringify({ code: 8, message: 'Vehicle not locked. Please lock it and try again.(2)' });
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () => body,
+      headers: { get: () => null },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      client.requestWithEventId('POST', '/vehicle/control', { jsonBody: { rvcReqType: '5' } }),
+    ).rejects.toThrow('Vehicle not locked. Please lock it and try again.(2)');
+
+    // Real bug this guards against: this used to retry with backoff for the full
+    // 60s timeout before surfacing a generic "Timed out" error, because code 8
+    // wasn't in the hard-failure list. One fetch call means it failed fast instead.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

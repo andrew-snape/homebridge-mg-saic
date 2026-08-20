@@ -127,10 +127,12 @@ The car can take 20 to 30 seconds to respond if asleep. This plugin retries for 
 Response handling rules:
 
 - `code` 401 or 403, or HTTP 401/403: session is dead, log in again.
-- `code` in (2, 3, 7): hard failure, do not retry.
+- `code` in (2, 3, 7, 8): hard failure, do not retry.
 - `event-id` header present and no `data` field: retry with that event ID.
 - `code` non-zero with a request `event-id` that isn't `"0"`: retry.
 - `code` 0: success, payload is in `data`.
+
+`code` 8 was originally missing from the hard-failure list and fell through to "retry". A real Homebridge log caught it doing so for a full 60 seconds: a `/vehicle/control` command the car rejects for a state precondition it won't accept - e.g. `"Vehicle not locked. Please lock it and try again.(2)"` for seat heat, `"Vehicle is powered on. Please turn it off and try again.(1)"` for rear defrost - comes back with the exact same `code: 8` and message on every poll, never once resolving differently, until the client gives up with a generic "Timed out after 60s waiting for the vehicle". Since 0.9.1 it's treated as a hard failure like 2/3/7, so the car's actual reason surfaces immediately instead of after a minute of pointless polling. See TESTING.md for the vehicle preconditions this uncovered (lock the car / turn off the ignition before seat heat, rear defrost, or pre-conditioning).
 
 ## Lock/unlock control
 
