@@ -185,6 +185,38 @@ describe('rawRequest / requestWithEventId - code 8', () => {
 });
 
 // ---------------------------------------------------------------------------
+// the timeout error carries the car's last actual response
+// ---------------------------------------------------------------------------
+
+describe('requestWithEventId - timeout message', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("includes the car's last response in the timeout error", async () => {
+    const client = makeClient();
+    // event-id header present + no data field is the "ask again with this id" shape,
+    // so this drives the retry loop rather than failing outright.
+    const body = JSON.stringify({
+      code: 4,
+      message: 'The remote control instruction failed, please try again later.',
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      status: 200,
+      text: async () => body,
+      headers: { get: (h) => (h === 'event-id' ? '12345' : null) },
+    }));
+
+    // Real bug this guards against: a car that answered with a specific, useful reason on
+    // every single poll still surfaced only "Timed out after 60s waiting for the vehicle"
+    // at warn level, so the reason was invisible without debug logging turned on.
+    await expect(
+      client.requestWithEventId('GET', '/vehicle/status', {}, { timeoutMs: 1 }),
+    ).rejects.toThrow('The remote control instruction failed, please try again later.');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isLoggedIn
 // ---------------------------------------------------------------------------
 

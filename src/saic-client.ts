@@ -277,6 +277,13 @@ export class SaicClient {
     const BACKOFF = [3000, 5000, 8000, 12000, 15000];
     let eventId = '0';
     let attempt = 0;
+    // The car's own reason for the last unsuccessful poll. Without this the timeout below
+    // reports only "Timed out after 60s", which looks identical whether the car never
+    // answered at all or was actively telling us something useful every single poll (a real
+    // log showed 20 consecutive "The remote control instruction failed, please try again
+    // later." responses collapsing into that one uninformative line at warn level, with the
+    // actual message visible only if debug logging happened to be on).
+    let lastMessage = '';
 
     while (Date.now() < deadline) {
       attempt++;
@@ -285,12 +292,17 @@ export class SaicClient {
       } catch (err) {
         if (!(err instanceof SaicRetry)) throw err;
         eventId = err.eventId;
+        lastMessage = err.message;
         const wait = BACKOFF[Math.min(attempt - 1, BACKOFF.length - 1)];
         this.log.debug(`waiting for the car (attempt ${attempt}, ${wait / 1000}s)...`);
         await sleep(wait);
       }
     }
-    throw new SaicError(`Timed out after ${timeoutMs / 1000}s waiting for the vehicle`, 408);
+    throw new SaicError(
+      `Timed out after ${timeoutMs / 1000}s waiting for the vehicle`
+      + (lastMessage ? ` (the car's last response was: ${lastMessage})` : ''),
+      408,
+    );
   }
 
   async login(username: string, password: string): Promise<unknown> {
