@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.9.1
+
+- **Fixed: a control command the car explicitly rejects (`code: 8`) now fails immediately instead of retrying for the full 60s timeout.** Found from a real Homebridge log: tapping the heated seat and rear defrost switches while the car was unlocked/running got `"Vehicle not locked. Please lock it and try again."` / `"Vehicle is powered on. Please turn it off and try again."` back from the car on every single poll, identically, for a full minute, before the plugin gave up with a generic "Timed out after 60s waiting for the vehicle" - hiding the actual, useful reason the command failed. `code: 8` is now treated as a hard failure like `2`/`3`/`7`, so that real reason surfaces in the log (and in the HomeKit "command failed" state) right away.
+- Discovered from the same log: the car appears to require being **locked and the ignition off** before it will accept seat heat or rear defrost commands remotely (very likely also applies to pre-conditioning, though that's not confirmed yet). Documented in TESTING.md and docs/API.md. This is a vehicle-side restriction, not something the plugin can work around.
+
 ## 0.9.0
 
 - **Fixed: the pre-conditioning switch is now writable.** Previously it only read the car's actual climate state - tapping it in Home flipped the tile locally but sent nothing to the car, so it silently reverted to "off" on the next poll (up to `pollIntervalMinutes` later) since nothing had actually changed. It's now wired to `/vehicle/control` (`rvcReqType: "6"`, ported from the reference client's `start_ac`/`stop_ac`), same pattern as the heated seat and rear defrost switches. **Not yet confirmed against real hardware** - see TESTING.md section 5 before relying on it for anything time-sensitive.
