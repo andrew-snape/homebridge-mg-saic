@@ -31,7 +31,7 @@ export class MgSaicPlatform {
     this.pollIntervalMs = Math.max(5, config.pollIntervalMinutes ?? 15) * 60 * 1000;
     this.enablePreconditioning = config.enablePreconditioning ?? true;
     this.enableDoorSensors = config.enableDoorSensors ?? true;
-    this.enableTemperatureSensors = config.enableTemperatureSensors ?? true;
+    this.enableTemperatureSensors = config.enableTemperatureSensors ?? false;
     // Off by default: writable controls not yet confirmed against real hardware when this
     // was written (unlike lock/unlock). See TESTING.md before turning them on. There is no
     // equivalent enableWindowControls option: window open/close was tried and confirmed not

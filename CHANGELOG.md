@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.7.1
+
+- `enableTemperatureSensors` now defaults to **false**. Temperature sensors appear on the iOS lock screen and Home widgets, which is confusing when the values are interior/exterior car temperatures rather than home room temperatures. Existing users who had them enabled and want to keep them can add `"enableTemperatureSensors": true` to their config.
+
 ## 0.7.0
 
 Performance optimisations — no functional changes, no config changes.
