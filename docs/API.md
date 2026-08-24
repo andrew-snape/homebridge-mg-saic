@@ -211,7 +211,9 @@ Status is readable back from `basicVehicleStatus.rmtHtdRrWndSt` in `/vehicle/sta
 
 ### Cabin pre-conditioning (`rvcReqType: "6"`)
 
-**Not yet confirmed against real hardware.** The HomeKit switch this drives was read-only until now (see CHANGELOG.md) because this command hadn't been ported; the body below is ported from the reference client's `start_ac`/`stop_ac` convenience wrappers, not derived from this project's own traffic capture.
+**The start command is confirmed working against a real MG4** (software version SWi165 - R11, Australia): `code: 0` with `failureType=0`, about 16 seconds and three polls after the request, having passed through two transient `code: 4` responses on the way. It physically ran the **heater**. The **stop** command has not been exercised yet.
+
+Why it heats rather than cools is not a bug, and is worth understanding before changing anything — see "What the MG4 actually does with these params" below. The HomeKit switch this drives was read-only until 0.9.0 (see CHANGELOG.md) because the command hadn't been ported; the body below comes from the reference client's `start_ac`/`stop_ac` convenience wrappers, not from this project's own traffic capture.
 
 To start:
 
@@ -241,7 +243,36 @@ To stop:
 }
 ```
 
-Param 19 is fan speed (0-5 in the reference client), param 20 is a temperature index (`CA==` decodes to `0x08`, the reference client's own default — no documented degrees-Celsius scale), param 22 is the AC compressor on/off flag. The reference client's `start_ac` doesn't send param 22 at all (fan speed + temperature is apparently enough to engage climate); `stop_ac` sends fan speed 0 and AC off but omits the temperature param. This plugin follows that exactly rather than guessing at a fuller command. Status is readable back from `basicVehicleStatus.remoteClimateStatus`.
+Param 19 is fan speed, param 20 is a temperature index, param 22 is the AC compressor on/off flag. The reference client's `start_ac` doesn't send param 22 at all; `stop_ac` sends fan speed 0 and AC off but omits the temperature param. This plugin follows that exactly rather than guessing at a fuller command. Status is readable back from `basicVehicleStatus.remoteClimateStatus`.
+
+#### What the MG4 actually does with these params
+
+The reference client documents none of this — it just defaults `temperature_idx` to 8 with no explanation of the scale. The values below come from the [`mg-saic-ha`](https://github.com/townsmcp/mg-saic-ha) Home Assistant integration's per-model vehicle profile for the MG4 (series code `EH32`), which derives them from decrypted iSmart app traffic and live telemetry. **They explain why this plugin's pre-conditioning switch runs the heater**, which surprised the first person to use it.
+
+**Temperature index** — linear, low temperature to low index:
+
+```
+temperature_idx = 3 + (desired_temp_celsius - 17)
+```
+
+Range 17 °C (index 3) to 33 °C (index 19). So the reference client's default of **index 8 is 22 °C** — a mild target, not a maximum. This plugin currently hardcodes index 8, i.e. every pre-conditioning start asks the car for 22 °C.
+
+**Heat vs cool is decided by the compressor flag, not the temperature.** The MG4 heats with the compressor **off**, using the PTC resistive heater. Because `start_ac` omits param 22 entirely, the compressor stays off, so the car drives toward the target temperature with the heater. On a cold morning that is exactly the observed behaviour and is working as intended; to actually cool, param 22 has to be sent as `1`.
+
+**Fan speed is not a 0–5 range on this car.** Only 1 (low), 2 (medium) and 3 (high) are fan speeds. Bytes **4 and 5 trigger heating and front defrost instead** — the HA integration's own notes record sending 5 as "High" putting a car into front defrost. This plugin sends fan speed 2, which is safely inside the real range, but anything exposing a 0–5 slider on the strength of the reference client's signature would be wrong.
+
+**`remoteClimateStatus` decode** (confirmed from decrypted iSmart traffic in that project, not by this one):
+
+| Value | Meaning |
+| --- | --- |
+| `0` | Off |
+| `2` | Heating (PTC resistive heater active) |
+| `3` | Cooling (compressor active) |
+| `4` | Fan only (assumed by elimination, not independently confirmed) |
+
+This plugin currently treats any non-zero value as simply "on", which is correct for a plain on/off Switch but discards the heat/cool/fan distinction.
+
+**The newer iSmart apps' "pre-drive" feature is not this command** and has not been reverse-engineered anywhere — neither `saic-python-client-ng` nor `mg-saic-ha` implements or mentions it. Adding it would need a fresh traffic capture from a current app.
 
 ### Windows (`rvcReqType: "3"`) — tried, does not work
 
@@ -282,7 +313,7 @@ Field names as returned by the API, decoded meaning based on a live capture:
 | `driverDoor`, `passengerDoor`, `rearLeftDoor`, `rearRightDoor` | `0` = closed, non-zero = open |
 | `bootStatus`, `bonnetStatus` | `0` = closed, non-zero = open |
 | `engineStatus` | `0` = off |
-| `remoteClimateStatus` | `0` = off. Drives the pre-conditioning Switch, which is writable but not yet confirmed against real hardware (see "Cabin pre-conditioning" above) |
+| `remoteClimateStatus` | `0` = off. Drives the pre-conditioning Switch; starting is confirmed working, stopping is not yet exercised (see "Cabin pre-conditioning" above) |
 | `interiorTemperature`, `exteriorTemperature` | Degrees Celsius. Drives the two `TemperatureSensor` services. Occasionally seen returning -128 elsewhere in this response (tyre pressure fields) when a value isn't ready, so a client should treat implausible readings as unavailable rather than trusting them outright |
 | `mileage` | Tenths of a km |
 | `vehicleAlarmStatus` | Meaning not yet confirmed |

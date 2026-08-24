@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.9.4
+
+Documentation only — no behaviour change. The pre-conditioning command itself is untouched.
+
+- **Cabin pre-conditioning is confirmed working against a real MG4** (SWi165 - R11, Australia). Starting it from HomeKit returned `code: 0` with `failureType=0` after about 16 seconds and three polls, and physically ran the climate system. This closes the last "implemented but never verified" item. The **stop** path is still unexercised.
+- **Documented why it runs the heater rather than cooling**, which surprised the first person to use it and is not a bug. The command asks for a fixed 22 °C and never sends the compressor flag, and the MG4 heats with the compressor off, so it drives to 22 °C on the PTC resistive heater.
+- **Documented the MG4 climate parameter mapping** in `docs/API.md`, sourced from the [`mg-saic-ha`](https://github.com/townsmcp/mg-saic-ha) Home Assistant integration's per-model vehicle profile (derived there from decrypted iSmart traffic). The reference client this plugin ports from documents none of it. Covers: the temperature index formula (`idx = 3 + (°C − 17)`, so the default index 8 is 22 °C), the compressor flag as the real heat/cool switch, the `remoteClimateStatus` decode (`2` = heat, `3` = cool, `4` = fan only), and a warning that **fan-speed bytes 4 and 5 are not higher fan speeds** — they put MG4-family cars into heating and front defrost.
+- Recorded that the newer iSmart apps' **"pre-drive" feature is a different thing entirely** and has not been reverse-engineered by this project, the reference client, or the Home Assistant integration. It would need a fresh traffic capture from a current app.
+
 ## 0.9.3
 
 - **The startup log now says which HomeKit services were exposed, and which were left out because they're off in config.** Prompted by a report of the pre-conditioning switch simply not appearing in the Home app: every optional service sits behind an `enable*` flag, and until now a missing tile looked exactly the same in the log whether it was disabled in config or something had gone wrong. You now get `HomeKit services exposed: ...` and, when anything is off, `Not exposed, disabled in config: ...`.
