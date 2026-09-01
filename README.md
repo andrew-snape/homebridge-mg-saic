@@ -17,7 +17,7 @@ Exposes one MG EV as one HomeKit accessory with:
 - **Battery** — state of charge, charging state, low battery warning
 - **LockMechanism** — central locking, lock and unlock, writable
 - **ContactSensor** × 6 — driver door, passenger door, rear left door, rear right door, boot, bonnet
-- **Switch** — cabin pre-conditioning, i.e. remote climate / aircon. Confirmed working in 0.9.4; note it currently asks the car for a fixed 22 °C and, because it leaves the compressor off, that means **heating**, see below
+- **HeaterCooler** — cabin pre-conditioning, i.e. remote climate / aircon. Confirmed working in 0.9.4. Target temperature is adjustable from 17 °C to 33 °C (1 °C step). Mode can be set to **Heat** (PTC resistive heater, no compressor) or **Cool** (AC compressor on). See below for details
 - **Outlet** — charging cable plugged in (`On`) and actively drawing (`InUse`)
 - **TemperatureSensor** × 2 — interior and exterior temperature. Falls back to the last known good reading and flags `StatusFault` if the API returns an unavailable-field sentinel instead of a real value
 - **Switch** × 2 — heated seats, left and right (off by default, see below)
@@ -27,16 +27,22 @@ Deliberately left out: tyre pressures, odometer, trip data, window open/close. T
 
 **Lock/unlock, heated seats, and rear defrost have all been confirmed working against real hardware.** The request format (`POST /vehicle/control` with an `rvcReqType`/`rvcParams` body) is ported from the reference `saic-python-client-ng` client. Unlocking has been confirmed to actually open the doors, seat heat and rear defrost have both been confirmed to physically engage, all on a real MG4 running **software version SWi165 - R11 (Australia)**.
 
-**Cabin pre-conditioning — the remote aircon — is writable as of 0.9.0**, via `/vehicle/control` with `rvcReqType: "6"`, ported from the reference client's `start_ac`/`stop_ac`. **It's confirmed working** against the same MG4 (SWi165 - R11, Australia) and physically ran the climate system.
+**Cabin pre-conditioning — the remote aircon — is a HeaterCooler service**, via `/vehicle/control` with `rvcReqType: "6"`, ported from the reference client's `start_ac`/`stop_ac`. **Starting it (Heat mode) is confirmed working** against the same MG4 (SWi165 - R11, Australia) and physically ran the climate system.
 
-Two limitations worth knowing before you use it:
+The HeaterCooler tile in the Home app gives you:
+- **Active** — turns the climate on/off
+- **Mode** — Heat (PTC resistive heater, no compressor) or Cool (AC compressor on). Tap the mode icon to toggle
+- **Temperature slider** — 17 °C to 33 °C, 1 °C step. Sliding while active re-sends the command immediately so the car adjusts without toggling off and back on. The chosen temperature and mode persist across on/off cycles for the session
 
-- **It heats.** The switch asks the car for a fixed 22 °C and leaves the compressor flag unset, and the MG4 heats with the compressor off. So on a cold morning it runs the PTC heater, which is usually what you want from pre-conditioning — but there is currently no way to cool, and no way to pick a temperature. See `docs/API.md` for the index-to-°C mapping and the compressor flag.
+One thing worth knowing:
+
 - **It is not the "pre-drive" feature** in the newer iSmart phone apps. That's a different thing and nobody has reverse-engineered it — neither the reference client nor the Home Assistant integration implements it.
 
-Stopping it has not been exercised yet.
+**Note on Cool mode:** sending the compressor flag (param ID 22 = 1) is the right approach per `docs/API.md` and the reference client, but it hasn't been confirmed against real hardware yet. If you try it and it works (or doesn't), an issue or PR is very welcome.
 
-It's also the one control that's easy to overlook: it's governed by `enablePreconditioning` in config, and if that's off you get no switch in the Home app at all. Since 0.9.3 the startup log lists which services were exposed and which were left out, so you can check at a glance.
+Stopping it has not been exercised yet against real hardware.
+
+It's also the one control that's easy to overlook: it's governed by `enablePreconditioning` in config, and if that's off you get no tile in the Home app at all. Since 0.9.3 the startup log lists which services were exposed and which were left out, so you can check at a glance.
 
 **Window open/close was tried and does not work.** Same request shape as the reference client, byte-verified, but the car consistently rejects it with `code 8`, `"Request failed. Please check the vehicle status and try again."`, whether the car was locked, unlocked with the driver's door held open, or freshly started, all tried against the same MG4 (SWi165 - R11, Australia). There's no config option or switch for it; the low-level `controlWindow`/`WINDOW_ID` request is still in `src/saic-client.js` for reference, unused, in case a firmware update or a different vehicle ever behaves differently. See `CHANGELOG.md`.
 
