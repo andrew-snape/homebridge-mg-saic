@@ -8,7 +8,7 @@
  *   driverDoor / passengerDoor /
  *   rearLeftDoor / rearRightDoor      0 = closed, non-zero = open
  *   bootStatus / bonnetStatus         0 = closed, non-zero = open
- *   remoteClimateStatus               0 = off, non-zero = on
+ *   remoteClimateStatus               0 = off, 2 = heat, 3 = cool, 4 = fan only
  *   bmsPackSOCDsp                     tenths of a percent (680 -> 68.0%)
  *   bmsChrgSts                        0 = not charging, non-zero = charging
  *   ccuOnbdChrgrPlugOn                0 = unplugged, 1 = plugged in
@@ -38,6 +38,17 @@
  * (frontLeftSeatHeatLevel) while the reference client's own naming is
  * functional (driver/passenger) - conflating the two would risk labelling
  * the wrong seat depending on market.
+ *
+ * Pre-conditioning is exposed as a HeaterCooler service, not a plain Switch.
+ * The HeaterCooler lets the user pick a target temperature (17-33 °C, step 1)
+ * via the HeatingThresholdTemperature characteristic. The temperature is
+ * translated to the SAIC temperature index (idx = 3 + (°C - 17)) and sent
+ * to startClimate. The compressor flag is not sent, so the car heats with the
+ * PTC resistive heater; TargetHeaterCoolerState is therefore locked to HEAT.
+ * CurrentHeaterCoolerState is derived from remoteClimateStatus
+ * (0=INACTIVE, 2=HEATING, 3=COOLING, 4=IDLE/fan-only). If the target
+ * temperature is changed while the climate is active, startClimate is
+ * re-sent immediately with the new index so the car adjusts.
  *
  * Window open/close was tried and confirmed NOT to work: the car
  * consistently rejects the command with "Request failed. Please check the
@@ -110,6 +121,10 @@ export class MgSaicAccessory {
   // to avoid hidden-class churn from dynamic property assignment.
   private _lastInteriorTemperature: number | null = null;
   private _lastExteriorTemperature: number | null = null;
+  // User-chosen pre-conditioning target temperature in °C (17-33). Persists
+  // across on/off toggles so turning the climate back on reuses the last-set
+  // temperature rather than resetting to 22 °C.
+  private _climateTargetTemp = 22;
 
   constructor(accessory: PlatformAccessory, client: SaicClient, {
     vin, log, api, enablePreconditioning, enableDoorSensors, enableTemperatureSensors,
@@ -133,7 +148,7 @@ export class MgSaicAccessory {
     this.setupBatteryService();
     this.setupLockService();
     this.setupOutletService();
-    if (this.enablePreconditioning)    this.setupPreconditioningSwitch();
+    if (this.enablePreconditioning)    this.setupPreconditioningHeaterCooler();
     if (this.enableDoorSensors)        this.setupContactSensors();
     if (this.enableTemperatureSensors) this.setupTemperatureSensors();
     if (this.enableHeatedSeats)        this.setupHeatedSeatSwitches();
@@ -216,13 +231,37 @@ export class MgSaicAccessory {
       .onGet(() => this.readCharging());
   }
 
-  setupPreconditioningSwitch(): void {
+  setupPreconditioningHeaterCooler(): void {
     this.preconditionService = this.accessory.getService('Pre-conditioning')
-      ?? this.accessory.addService(this.Service.Switch, 'Pre-conditioning', 'preconditioning');
+      ?? this.accessory.addService(this.Service.HeaterCooler, 'Pre-conditioning', 'preconditioning');
 
-    this.preconditionService.getCharacteristic(this.Characteristic.On)
-      .onGet(() => this.readClimateOn())
-      .onSet((value) => this.setPreconditioning(value as boolean));
+    // Active — on/off. Maps to startClimate / stopClimate.
+    this.preconditionService.getCharacteristic(this.Characteristic.Active)
+      .onGet(() => (this.readClimateOn()
+        ? this.Characteristic.Active.ACTIVE
+        : this.Characteristic.Active.INACTIVE))
+      .onSet((value) => this.setClimateActive(value === this.Characteristic.Active.ACTIVE));
+
+    // CurrentHeaterCoolerState — derived from remoteClimateStatus.
+    this.preconditionService.getCharacteristic(this.Characteristic.CurrentHeaterCoolerState)
+      .onGet(() => this.readHeaterCoolerState());
+
+    // TargetHeaterCoolerState — locked to HEAT; the compressor flag is not sent.
+    this.preconditionService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
+      .setProps({ validValues: [this.Characteristic.TargetHeaterCoolerState.HEAT] })
+      .onGet(() => this.Characteristic.TargetHeaterCoolerState.HEAT)
+      .onSet(() => { /* only HEAT is valid; no-op to satisfy HomeKit */ });
+
+    // CurrentTemperature — interior sensor if available, otherwise 20 °C.
+    this.preconditionService.getCharacteristic(this.Characteristic.CurrentTemperature)
+      .setProps({ minValue: -50, maxValue: 80 })
+      .onGet(() => this.readInteriorTempForClimate());
+
+    // HeatingThresholdTemperature — user's chosen target, 17-33 °C, step 1.
+    this.preconditionService.getCharacteristic(this.Characteristic.HeatingThresholdTemperature)
+      .setProps({ minValue: 17, maxValue: 33, minStep: 1 })
+      .onGet(() => this._climateTargetTemp)
+      .onSet((value) => this.setClimateTemperature(value as number));
   }
 
   setupContactSensors(): void {
@@ -316,6 +355,28 @@ export class MgSaicAccessory {
 
   readClimateOn(): boolean {
     return Boolean(this.basicStatus()?.['remoteClimateStatus']);
+  }
+
+  /**
+   * Maps remoteClimateStatus to the HomeKit CurrentHeaterCoolerState enum.
+   * Values per docs/API.md: 0=off, 2=heat, 3=cool, 4=fan-only.
+   */
+  readHeaterCoolerState(): CharacteristicValue {
+    const status = this.basicStatus()?.['remoteClimateStatus'] as number | undefined;
+    if (!status) return this.Characteristic.CurrentHeaterCoolerState.INACTIVE;
+    if (status === 2) return this.Characteristic.CurrentHeaterCoolerState.HEATING;
+    if (status === 3) return this.Characteristic.CurrentHeaterCoolerState.COOLING;
+    return this.Characteristic.CurrentHeaterCoolerState.IDLE; // 4 = fan only, or any other non-zero
+  }
+
+  /** Returns the interior temperature for the HeaterCooler CurrentTemperature
+   * characteristic. Falls back to 20 °C when no valid reading is cached, so
+   * HomeKit always gets a value in range rather than 0 (below the minimum). */
+  readInteriorTempForClimate(): number {
+    if (this.isTemperatureValid('interiorTemperature')) {
+      return this.readTemperature('interiorTemperature');
+    }
+    return this._lastInteriorTemperature ?? 20;
   }
 
   readContactState(field: string): CharacteristicValue {
@@ -426,27 +487,49 @@ export class MgSaicAccessory {
   }
 
   /**
-   * Handles a HomeKit pre-conditioning toggle. Previously this switch's On
-   * characteristic had no onSet at all: HomeKit accepted the tap locally, but
-   * nothing was actually sent to the car, so the tile silently reverted to
-   * the real (unchanged) state on the next poll. Wired to /vehicle/control
-   * now, same pattern as setSeatHeat/setRearDefrost. Confirmed working against
-   * a real MG4 in 0.9.4; it runs the heater, because the command targets a fixed
-   * 22C and leaves the compressor off. The stop path is still unexercised.
+   * Handles a HomeKit Active toggle on the HeaterCooler service.
+   * Turning on passes the current _climateTargetTemp through the SAIC
+   * temperature index formula (idx = 3 + (°C - 17)) so the car targets the
+   * user's chosen temperature rather than always defaulting to 22 °C.
    */
-  async setPreconditioning(value: boolean): Promise<void> {
+  async setClimateActive(value: boolean): Promise<void> {
     this.log.info(`${value ? 'Starting' : 'Stopping'} cabin pre-conditioning via HomeKit...`);
     try {
-      if (value) await this.client.startClimate(this.vin);
-      else       await this.client.stopClimate(this.vin);
+      if (value) {
+        const idx = 3 + Math.round(this._climateTargetTemp - 17);
+        await this.client.startClimate(this.vin, idx);
+      } else {
+        await this.client.stopClimate(this.vin);
+      }
       this._lastStatus = {
         ...this._lastStatus,
-        basicVehicleStatus: { ...this.basicStatus(), remoteClimateStatus: value ? 1 : 0 },
+        basicVehicleStatus: { ...this.basicStatus(), remoteClimateStatus: value ? 2 : 0 },
       };
       this.log.info('Pre-conditioning command succeeded.');
     } catch (err) {
       this.log.warn(`Pre-conditioning command failed: ${(err as Error).message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  /**
+   * Handles a HomeKit HeatingThresholdTemperature change on the HeaterCooler.
+   * Stores the new target and, if the climate is currently on, re-sends
+   * startClimate with the updated index so the car adjusts immediately rather
+   * than waiting for the user to toggle the switch off and back on.
+   */
+  async setClimateTemperature(temp: number): Promise<void> {
+    this._climateTargetTemp = temp;
+    if (this.readClimateOn()) {
+      this.log.info(`Adjusting pre-conditioning target to ${temp} °C...`);
+      try {
+        const idx = 3 + Math.round(temp - 17);
+        await this.client.startClimate(this.vin, idx);
+        this.log.info(`Pre-conditioning target updated to ${temp} °C.`);
+      } catch (err) {
+        this.log.warn(`Pre-conditioning temperature update failed: ${(err as Error).message}`);
+        throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      }
     }
   }
 
@@ -501,7 +584,16 @@ export class MgSaicAccessory {
   pushStatusCharacteristics(): void {
     this.lockService.updateCharacteristic(this.Characteristic.LockCurrentState, this.readLockState());
     if (this.enablePreconditioning && this.preconditionService) {
-      this.preconditionService.updateCharacteristic(this.Characteristic.On, this.readClimateOn());
+      this.preconditionService.updateCharacteristic(
+        this.Characteristic.Active,
+        this.readClimateOn() ? this.Characteristic.Active.ACTIVE : this.Characteristic.Active.INACTIVE,
+      );
+      this.preconditionService.updateCharacteristic(
+        this.Characteristic.CurrentHeaterCoolerState, this.readHeaterCoolerState(),
+      );
+      this.preconditionService.updateCharacteristic(
+        this.Characteristic.CurrentTemperature, this.readInteriorTempForClimate(),
+      );
     }
     if (this.enableDoorSensors && this.contactServices) {
       for (const [[, field], i] of DOOR_FIELDS.map((entry, idx) => [entry, idx] as const)) {

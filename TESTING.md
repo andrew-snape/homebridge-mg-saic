@@ -86,7 +86,7 @@ While that's running, open the Home app on your phone, tap "+", "Add Accessory",
 - Lock tile matches whether the car is actually locked
 - The six contact sensors show closed if the doors, boot and bonnet are shut
 - The outlet shows off / not in use if the car isn't plugged in
-- The pre-conditioning switch matches the car's actual state
+- The pre-conditioning HeaterCooler Active state matches whether the car's climate is currently on
 
 Leave it running for one full poll interval if you want to see the values refresh live rather than just on startup.
 
@@ -166,11 +166,13 @@ Straightforward on/off. Turn it on, confirm the rear windscreen's heating elemen
 
 **Confirmed working** against a real MG4 (software version SWi165 - R11, Australia) as of 0.9.4. Starting it from HomeKit took about 16 seconds and three polls — through two transient `code: 4` responses — before returning `code: 0` with `failureType=0`, and it physically ran the climate system.
 
-**It ran the heater, and that is expected.** The switch asks the car for a fixed 22 °C (temperature index 8) and never sends the compressor flag, and the MG4 heats with the compressor off. So it drives toward 22 °C using the PTC resistive heater. On a cold morning that's the desired behaviour; there is currently no way to cool, and no way to pick a temperature. `docs/API.md` has the index-to-°C formula, the compressor flag, and the fan-speed range — read it before changing any of these values, because fan-speed bytes 4 and 5 are not "higher fan", they put the car into heating/front defrost.
+Pre-conditioning is now exposed as a **HeaterCooler** service. The `HeatingThresholdTemperature` slider lets you pick a target from 17 °C to 33 °C (1 °C step, default 22 °C). The chosen temperature is translated to the SAIC temperature index (`idx = 3 + (°C − 17)`) and sent with `startClimate`. Sliding the temperature while the climate is already active re-sends the command immediately so the car adjusts without toggling the switch.
+
+**It heats, and that is expected.** The compressor flag is not sent, and the MG4 heats with the compressor off. So it drives toward the target temperature using the PTC resistive heater. There is currently no cooling mode — `TargetHeaterCoolerState` is locked to Heat. `docs/API.md` has the compressor flag and fan-speed range if you want to extend this.
 
 **This is not the "pre-drive" feature** in the newer iSmart phone apps. That's something else, and it has not been reverse-engineered by this project, the reference client, or the Home Assistant integration. Implementing it would need a fresh traffic capture from a current app.
 
-Still untested: the **stop** path. Turn the switch off and confirm the car actually stops, and that `remoteClimateStatus` returns to `0`.
+Still untested: the **stop** path. Tap Active off and confirm the car actually stops, and that `remoteClimateStatus` returns to `0`.
 
 As with the other control commands, lock the car and turn the ignition off first (see the heated seats/rear defrost note above — the same `code: 8` vehicle-state rejection is likely to apply here too).
 
@@ -189,7 +191,7 @@ This was observed for roughly 45 minutes straight, across several Homebridge res
 
 ## Known gaps at this stage
 
-- Pre-conditioning works, but only as a fixed 22 °C heat (see section 5 above). No cooling, no temperature choice, and the stop path is still unexercised. A HomeKit `HeaterCooler`/`Thermostat` service could expose real temperature control now that the index-to-°C mapping is known — see `docs/API.md`.
+- Pre-conditioning now uses a HeaterCooler service with a 17–33 °C temperature slider. No cooling (compressor flag not sent), and the **stop** path is still unexercised against real hardware — see section 5.
 - The newer iSmart apps' "pre-drive" feature is not implemented and not reverse-engineered anywhere; it would need a fresh traffic capture.
 - Window open/close doesn't work, see section 5 above. Not a config option, not a bug to chase further unless you're on different hardware/firmware.
 - Only tested against a single vehicle. If your account has more than one, set the `vin` config option to pin a specific one explicitly rather than relying on "first vehicle returned."

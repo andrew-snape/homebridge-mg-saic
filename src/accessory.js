@@ -88,7 +88,7 @@ export class MgSaicAccessory {
     this.setupBatteryService();
     this.setupLockService();
     this.setupOutletService();
-    if (this.enablePreconditioning) this.setupPreconditioningSwitch();
+    if (this.enablePreconditioning) this.setupPreconditioningHeaterCooler();
     if (this.enableDoorSensors) this.setupContactSensors();
     if (this.enableTemperatureSensors) this.setupTemperatureSensors();
     if (this.enableHeatedSeats) this.setupHeatedSeatSwitches();
@@ -102,6 +102,10 @@ export class MgSaicAccessory {
     // to avoid hidden-class churn from dynamic property assignment.
     this._lastInteriorTemperature = null;
     this._lastExteriorTemperature = null;
+    // User-chosen pre-conditioning target temperature in °C (17-33). Persists
+    // across on/off toggles so turning the climate back on reuses the last-set
+    // temperature rather than resetting to 22 °C.
+    this._climateTargetTemp = 22;
 
     this.logExposedServices();
   }
@@ -181,13 +185,32 @@ export class MgSaicAccessory {
       .onGet(() => this.readCharging());
   }
 
-  setupPreconditioningSwitch() {
+  setupPreconditioningHeaterCooler() {
     this.preconditionService = this.accessory.getService('Pre-conditioning')
-      ?? this.accessory.addService(this.Service.Switch, 'Pre-conditioning', 'preconditioning');
+      ?? this.accessory.addService(this.Service.HeaterCooler, 'Pre-conditioning', 'preconditioning');
 
-    this.preconditionService.getCharacteristic(this.Characteristic.On)
-      .onGet(() => this.readClimateOn())
-      .onSet((value) => this.setPreconditioning(value));
+    this.preconditionService.getCharacteristic(this.Characteristic.Active)
+      .onGet(() => (this.readClimateOn()
+        ? this.Characteristic.Active.ACTIVE
+        : this.Characteristic.Active.INACTIVE))
+      .onSet((value) => this.setClimateActive(value === this.Characteristic.Active.ACTIVE));
+
+    this.preconditionService.getCharacteristic(this.Characteristic.CurrentHeaterCoolerState)
+      .onGet(() => this.readHeaterCoolerState());
+
+    this.preconditionService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
+      .setProps({ validValues: [this.Characteristic.TargetHeaterCoolerState.HEAT] })
+      .onGet(() => this.Characteristic.TargetHeaterCoolerState.HEAT)
+      .onSet(() => { /* only HEAT is valid; no-op to satisfy HomeKit */ });
+
+    this.preconditionService.getCharacteristic(this.Characteristic.CurrentTemperature)
+      .setProps({ minValue: -50, maxValue: 80 })
+      .onGet(() => this.readInteriorTempForClimate());
+
+    this.preconditionService.getCharacteristic(this.Characteristic.HeatingThresholdTemperature)
+      .setProps({ minValue: 17, maxValue: 33, minStep: 1 })
+      .onGet(() => this._climateTargetTemp)
+      .onSet((value) => this.setClimateTemperature(value));
   }
 
   setupContactSensors() {
@@ -269,6 +292,21 @@ export class MgSaicAccessory {
 
   readClimateOn() {
     return Boolean(this._lastStatus?.basicVehicleStatus?.remoteClimateStatus);
+  }
+
+  readHeaterCoolerState() {
+    const status = this._lastStatus?.basicVehicleStatus?.remoteClimateStatus;
+    if (!status) return this.Characteristic.CurrentHeaterCoolerState.INACTIVE;
+    if (status === 2) return this.Characteristic.CurrentHeaterCoolerState.HEATING;
+    if (status === 3) return this.Characteristic.CurrentHeaterCoolerState.COOLING;
+    return this.Characteristic.CurrentHeaterCoolerState.IDLE;
+  }
+
+  readInteriorTempForClimate() {
+    if (this.isTemperatureValid('interiorTemperature')) {
+      return this.readTemperature('interiorTemperature');
+    }
+    return this._lastInteriorTemperature ?? 20;
   }
 
   readContactState(field) {
@@ -380,19 +418,38 @@ export class MgSaicAccessory {
     }
   }
 
-  async setPreconditioning(value) {
+  async setClimateActive(value) {
     this.log.info(`${value ? 'Starting' : 'Stopping'} cabin pre-conditioning via HomeKit...`);
     try {
-      if (value) await this.client.startClimate(this.vin);
-      else       await this.client.stopClimate(this.vin);
+      if (value) {
+        const idx = 3 + Math.round(this._climateTargetTemp - 17);
+        await this.client.startClimate(this.vin, idx);
+      } else {
+        await this.client.stopClimate(this.vin);
+      }
       this._lastStatus = {
         ...this._lastStatus,
-        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, remoteClimateStatus: value ? 1 : 0 },
+        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, remoteClimateStatus: value ? 2 : 0 },
       };
       this.log.info('Pre-conditioning command succeeded.');
     } catch (err) {
       this.log.warn(`Pre-conditioning command failed: ${err.message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  async setClimateTemperature(temp) {
+    this._climateTargetTemp = temp;
+    if (this.readClimateOn()) {
+      this.log.info(`Adjusting pre-conditioning target to ${temp} °C...`);
+      try {
+        const idx = 3 + Math.round(temp - 17);
+        await this.client.startClimate(this.vin, idx);
+        this.log.info(`Pre-conditioning target updated to ${temp} °C.`);
+      } catch (err) {
+        this.log.warn(`Pre-conditioning temperature update failed: ${err.message}`);
+        throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      }
     }
   }
 
@@ -447,7 +504,16 @@ export class MgSaicAccessory {
   pushStatusCharacteristics() {
     this.lockService.updateCharacteristic(this.Characteristic.LockCurrentState, this.readLockState());
     if (this.enablePreconditioning) {
-      this.preconditionService.updateCharacteristic(this.Characteristic.On, this.readClimateOn());
+      this.preconditionService.updateCharacteristic(
+        this.Characteristic.Active,
+        this.readClimateOn() ? this.Characteristic.Active.ACTIVE : this.Characteristic.Active.INACTIVE,
+      );
+      this.preconditionService.updateCharacteristic(
+        this.Characteristic.CurrentHeaterCoolerState, this.readHeaterCoolerState(),
+      );
+      this.preconditionService.updateCharacteristic(
+        this.Characteristic.CurrentTemperature, this.readInteriorTempForClimate(),
+      );
     }
     if (this.enableDoorSensors) {
       for (const [, field, i] of DOOR_FIELDS.map(([n, f], i) => [n, f, i])) {
