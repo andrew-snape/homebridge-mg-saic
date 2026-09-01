@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.9.6
+
+- **Pre-conditioning HeaterCooler now supports Cool mode.** `TargetHeaterCoolerState` is no longer locked to HEAT — tapping the mode icon in the Home app switches between Heat and Cool. In Cool mode `startClimate` sends param 22 = 1 (AC compressor on), which per `docs/API.md` is the correct flag for cooling. Heat mode continues to work as before (no compressor flag, PTC resistive heater). **Cool mode has not yet been confirmed against real hardware** — if you test it and cold air blows (or doesn't), please report back. Changing mode while the climate is active re-sends the command immediately. `saic-client.startClimate` gains an optional `compressor` boolean parameter (default `false`); all existing behaviour is unchanged when it's absent.
+
 ## 0.9.5
 
 - **Pre-conditioning is now a `HeaterCooler` service instead of a plain Switch.** The Home app tile now shows a temperature slider (17–33 °C, 1 °C step, default 22 °C). Sliding it translates the chosen temperature to the SAIC temperature index (`idx = 3 + (°C − 17)`) and sends `startClimate` with that index. If the climate is already active when the slider moves, the command is re-sent immediately so the car adjusts without toggling Active off and back on. This replaces the old fixed-22 °C behaviour. The `Active` characteristic maps to `startClimate`/`stopClimate`. `CurrentHeaterCoolerState` maps from `remoteClimateStatus` (0 = INACTIVE, 2 = HEATING, 3 = COOLING, 4 = IDLE/fan-only). `TargetHeaterCoolerState` is locked to HEAT — the compressor flag is still not sent, so the car heats with the PTC resistive heater toward whatever temperature you set. No config change needed; `enablePreconditioning` still controls whether the tile appears at all.

@@ -106,6 +106,9 @@ export class MgSaicAccessory {
     // across on/off toggles so turning the climate back on reuses the last-set
     // temperature rather than resetting to 22 °C.
     this._climateTargetTemp = 22;
+    // User-chosen mode: HEAT (compressor off) or COOL (compressor on). Persists
+    // across on/off toggles.
+    this._climateMode = 1; // 1 = HEAT (matches Characteristic.TargetHeaterCoolerState.HEAT)
 
     this.logExposedServices();
   }
@@ -199,15 +202,23 @@ export class MgSaicAccessory {
       .onGet(() => this.readHeaterCoolerState());
 
     this.preconditionService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
-      .setProps({ validValues: [this.Characteristic.TargetHeaterCoolerState.HEAT] })
-      .onGet(() => this.Characteristic.TargetHeaterCoolerState.HEAT)
-      .onSet(() => { /* only HEAT is valid; no-op to satisfy HomeKit */ });
+      .setProps({ validValues: [
+        this.Characteristic.TargetHeaterCoolerState.HEAT,
+        this.Characteristic.TargetHeaterCoolerState.COOL,
+      ] })
+      .onGet(() => this._climateMode)
+      .onSet((value) => this.setClimateMode(value));
 
     this.preconditionService.getCharacteristic(this.Characteristic.CurrentTemperature)
       .setProps({ minValue: -50, maxValue: 80 })
       .onGet(() => this.readInteriorTempForClimate());
 
     this.preconditionService.getCharacteristic(this.Characteristic.HeatingThresholdTemperature)
+      .setProps({ minValue: 17, maxValue: 33, minStep: 1 })
+      .onGet(() => this._climateTargetTemp)
+      .onSet((value) => this.setClimateTemperature(value));
+
+    this.preconditionService.getCharacteristic(this.Characteristic.CoolingThresholdTemperature)
       .setProps({ minValue: 17, maxValue: 33, minStep: 1 })
       .onGet(() => this._climateTargetTemp)
       .onSet((value) => this.setClimateTemperature(value));
@@ -423,18 +434,37 @@ export class MgSaicAccessory {
     try {
       if (value) {
         const idx = 3 + Math.round(this._climateTargetTemp - 17);
-        await this.client.startClimate(this.vin, idx);
+        const compressor = this._climateMode === this.Characteristic.TargetHeaterCoolerState.COOL;
+        await this.client.startClimate(this.vin, idx, compressor);
       } else {
         await this.client.stopClimate(this.vin);
       }
+      const activeStatus = this._climateMode === this.Characteristic.TargetHeaterCoolerState.COOL ? 3 : 2;
       this._lastStatus = {
         ...this._lastStatus,
-        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, remoteClimateStatus: value ? 2 : 0 },
+        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, remoteClimateStatus: value ? activeStatus : 0 },
       };
       this.log.info('Pre-conditioning command succeeded.');
     } catch (err) {
       this.log.warn(`Pre-conditioning command failed: ${err.message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  async setClimateMode(mode) {
+    this._climateMode = mode;
+    if (this.readClimateOn()) {
+      const modeLabel = mode === this.Characteristic.TargetHeaterCoolerState.COOL ? 'cool' : 'heat';
+      this.log.info(`Switching pre-conditioning mode to ${modeLabel}...`);
+      try {
+        const idx = 3 + Math.round(this._climateTargetTemp - 17);
+        const compressor = mode === this.Characteristic.TargetHeaterCoolerState.COOL;
+        await this.client.startClimate(this.vin, idx, compressor);
+        this.log.info(`Pre-conditioning mode switched to ${modeLabel}.`);
+      } catch (err) {
+        this.log.warn(`Pre-conditioning mode switch failed: ${err.message}`);
+        throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      }
     }
   }
 
@@ -444,7 +474,8 @@ export class MgSaicAccessory {
       this.log.info(`Adjusting pre-conditioning target to ${temp} °C...`);
       try {
         const idx = 3 + Math.round(temp - 17);
-        await this.client.startClimate(this.vin, idx);
+        const compressor = this._climateMode === this.Characteristic.TargetHeaterCoolerState.COOL;
+        await this.client.startClimate(this.vin, idx, compressor);
         this.log.info(`Pre-conditioning target updated to ${temp} °C.`);
       } catch (err) {
         this.log.warn(`Pre-conditioning temperature update failed: ${err.message}`);

@@ -446,22 +446,24 @@ export class SaicClient {
   //
   // rvcReqType "6" is climate control. paramId 19 = fan speed (0-5), 20 = temperature index,
   // 22 = AC compressor on/off. Ported from the reference client's own start_ac/stop_ac
-  // convenience wrappers rather than the full fan-speed/temperature range, since this plugin
-  // only exposes a plain on/off Switch: start sends fan speed 2 plus a temperature index (the
-  // reference client's own default of 8, scale not documented there either); stop sends fan
-  // speed 0 and AC off. Confirmed working on a real MG4: index 8 is 22C and, with no
-  // compressor flag sent, the car heats to it. docs/API.md has the full index/fan mapping;
-  // fan bytes 4 and 5 are NOT higher fan speeds, they trigger heat/front-defrost.
+  // convenience wrappers rather than the full fan-speed/temperature range. Fan bytes 4 and 5
+  // are NOT higher fan speeds — they trigger heat/front-defrost on MG4-family cars.
+  //
+  // compressor=false (the reference client default): car heats with the PTC resistive heater,
+  //   remoteClimateStatus returns 2 (HEATING). Confirmed working on a real MG4.
+  // compressor=true: AC compressor engaged for cooling, remoteClimateStatus expected to return
+  //   3 (COOLING). Not yet confirmed against real hardware.
 
-  startClimate(vin: string, temperatureIdx = 8): Promise<unknown> {
-    return this.vehicleControl(vin, {
-      rvcReqType: '6',
-      rvcParams: [
-        { paramId: 19,  paramValue: b64([2]) },
-        { paramId: 20,  paramValue: b64([temperatureIdx]) },
-        { paramId: 255, paramValue: b64([0, 0, 0, 0]) },
-      ],
-    });
+  startClimate(vin: string, temperatureIdx = 8, compressor = false): Promise<unknown> {
+    const params: { paramId: number; paramValue: string }[] = [
+      { paramId: 19,  paramValue: b64([2]) },
+      { paramId: 20,  paramValue: b64([temperatureIdx]) },
+    ];
+    if (compressor) {
+      params.push({ paramId: 22, paramValue: b64([1]) });
+    }
+    params.push({ paramId: 255, paramValue: b64([0, 0, 0, 0]) });
+    return this.vehicleControl(vin, { rvcReqType: '6', rvcParams: params });
   }
 
   stopClimate(vin: string): Promise<unknown> {

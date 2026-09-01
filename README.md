@@ -17,7 +17,7 @@ Exposes one MG EV as one HomeKit accessory with:
 - **Battery** — state of charge, charging state, low battery warning
 - **LockMechanism** — central locking, lock and unlock, writable
 - **ContactSensor** × 6 — driver door, passenger door, rear left door, rear right door, boot, bonnet
-- **HeaterCooler** — cabin pre-conditioning, i.e. remote climate / aircon. Confirmed working in 0.9.4. Target temperature is adjustable from 17 °C to 33 °C (1 °C step); the compressor flag is not sent, so the car **heats** toward the target using the PTC resistive heater. See below for details
+- **HeaterCooler** — cabin pre-conditioning, i.e. remote climate / aircon. Confirmed working in 0.9.4. Target temperature is adjustable from 17 °C to 33 °C (1 °C step). Mode can be set to **Heat** (PTC resistive heater, no compressor) or **Cool** (AC compressor on). See below for details
 - **Outlet** — charging cable plugged in (`On`) and actively drawing (`InUse`)
 - **TemperatureSensor** × 2 — interior and exterior temperature. Falls back to the last known good reading and flags `StatusFault` if the API returns an unavailable-field sentinel instead of a real value
 - **Switch** × 2 — heated seats, left and right (off by default, see below)
@@ -27,14 +27,18 @@ Deliberately left out: tyre pressures, odometer, trip data, window open/close. T
 
 **Lock/unlock, heated seats, and rear defrost have all been confirmed working against real hardware.** The request format (`POST /vehicle/control` with an `rvcReqType`/`rvcParams` body) is ported from the reference `saic-python-client-ng` client. Unlocking has been confirmed to actually open the doors, seat heat and rear defrost have both been confirmed to physically engage, all on a real MG4 running **software version SWi165 - R11 (Australia)**.
 
-**Cabin pre-conditioning — the remote aircon — is a HeaterCooler service**, via `/vehicle/control` with `rvcReqType: "6"`, ported from the reference client's `start_ac`/`stop_ac`. **It's confirmed working** against the same MG4 (SWi165 - R11, Australia) and physically ran the climate system.
+**Cabin pre-conditioning — the remote aircon — is a HeaterCooler service**, via `/vehicle/control` with `rvcReqType: "6"`, ported from the reference client's `start_ac`/`stop_ac`. **Starting it (Heat mode) is confirmed working** against the same MG4 (SWi165 - R11, Australia) and physically ran the climate system.
 
-Two limitations worth knowing before you use it:
+The HeaterCooler tile in the Home app gives you:
+- **Active** — turns the climate on/off
+- **Mode** — Heat (PTC resistive heater, no compressor) or Cool (AC compressor on). Tap the mode icon to toggle
+- **Temperature slider** — 17 °C to 33 °C, 1 °C step. Sliding while active re-sends the command immediately so the car adjusts without toggling off and back on. The chosen temperature and mode persist across on/off cycles for the session
 
-- **It heats.** The compressor flag is not sent, and the MG4 heats with the compressor off. So on a cold morning it runs the PTC heater. There is currently no way to cool via HomeKit — the `TargetHeaterCoolerState` is locked to Heat. See `docs/API.md` for the compressor flag and index-to-°C mapping if you want to extend this.
+One thing worth knowing:
+
 - **It is not the "pre-drive" feature** in the newer iSmart phone apps. That's a different thing and nobody has reverse-engineered it — neither the reference client nor the Home Assistant integration implements it.
 
-The HeaterCooler tile in the Home app shows `HeatingThresholdTemperature` as a slider from 17 °C to 33 °C (1 °C step). Sliding it while the climate is active re-sends `startClimate` with the new temperature index immediately, so the car adjusts without needing to toggle the switch. The chosen temperature persists across on/off cycles for the session.
+**Note on Cool mode:** sending the compressor flag (param ID 22 = 1) is the right approach per `docs/API.md` and the reference client, but it hasn't been confirmed against real hardware yet. If you try it and it works (or doesn't), an issue or PR is very welcome.
 
 Stopping it has not been exercised yet against real hardware.
 

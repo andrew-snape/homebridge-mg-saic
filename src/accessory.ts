@@ -41,14 +41,14 @@
  *
  * Pre-conditioning is exposed as a HeaterCooler service, not a plain Switch.
  * The HeaterCooler lets the user pick a target temperature (17-33 °C, step 1)
- * via the HeatingThresholdTemperature characteristic. The temperature is
- * translated to the SAIC temperature index (idx = 3 + (°C - 17)) and sent
- * to startClimate. The compressor flag is not sent, so the car heats with the
- * PTC resistive heater; TargetHeaterCoolerState is therefore locked to HEAT.
+ * via the HeatingThresholdTemperature / CoolingThresholdTemperature characteristics
+ * (both backed by the same _climateTargetTemp value — HomeKit shows whichever is
+ * relevant based on TargetHeaterCoolerState). TargetHeaterCoolerState can be set to
+ * HEAT (compressor off, PTC resistive heater) or COOL (compressor on, AC).
  * CurrentHeaterCoolerState is derived from remoteClimateStatus
  * (0=INACTIVE, 2=HEATING, 3=COOLING, 4=IDLE/fan-only). If the target
- * temperature is changed while the climate is active, startClimate is
- * re-sent immediately with the new index so the car adjusts.
+ * temperature or mode is changed while the climate is active, startClimate is
+ * re-sent immediately with the new index and compressor flag so the car adjusts.
  *
  * Window open/close was tried and confirmed NOT to work: the car
  * consistently rejects the command with "Request failed. Please check the
@@ -125,6 +125,9 @@ export class MgSaicAccessory {
   // across on/off toggles so turning the climate back on reuses the last-set
   // temperature rather than resetting to 22 °C.
   private _climateTargetTemp = 22;
+  // User-chosen mode: HEAT (compressor off) or COOL (compressor on). Persists
+  // across on/off toggles.
+  private _climateMode = 1; // 1 = HEAT
 
   constructor(accessory: PlatformAccessory, client: SaicClient, {
     vin, log, api, enablePreconditioning, enableDoorSensors, enableTemperatureSensors,
@@ -246,19 +249,31 @@ export class MgSaicAccessory {
     this.preconditionService.getCharacteristic(this.Characteristic.CurrentHeaterCoolerState)
       .onGet(() => this.readHeaterCoolerState());
 
-    // TargetHeaterCoolerState — locked to HEAT; the compressor flag is not sent.
+    // TargetHeaterCoolerState — HEAT or COOL. Selects whether the compressor is engaged.
+    // AUTO is not offered: the plugin always sends an explicit temperature index and the
+    // compressor flag independently, so "auto" has no well-defined meaning here.
     this.preconditionService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
-      .setProps({ validValues: [this.Characteristic.TargetHeaterCoolerState.HEAT] })
-      .onGet(() => this.Characteristic.TargetHeaterCoolerState.HEAT)
-      .onSet(() => { /* only HEAT is valid; no-op to satisfy HomeKit */ });
+      .setProps({ validValues: [
+        this.Characteristic.TargetHeaterCoolerState.HEAT,
+        this.Characteristic.TargetHeaterCoolerState.COOL,
+      ] })
+      .onGet(() => this._climateMode)
+      .onSet((value) => this.setClimateMode(value as number));
 
     // CurrentTemperature — interior sensor if available, otherwise 20 °C.
     this.preconditionService.getCharacteristic(this.Characteristic.CurrentTemperature)
       .setProps({ minValue: -50, maxValue: 80 })
       .onGet(() => this.readInteriorTempForClimate());
 
-    // HeatingThresholdTemperature — user's chosen target, 17-33 °C, step 1.
+    // HeatingThresholdTemperature — used when mode is HEAT, 17-33 °C, step 1.
     this.preconditionService.getCharacteristic(this.Characteristic.HeatingThresholdTemperature)
+      .setProps({ minValue: 17, maxValue: 33, minStep: 1 })
+      .onGet(() => this._climateTargetTemp)
+      .onSet((value) => this.setClimateTemperature(value as number));
+
+    // CoolingThresholdTemperature — used when mode is COOL, 17-33 °C, step 1.
+    // HomeKit shows one slider at a time based on TargetHeaterCoolerState.
+    this.preconditionService.getCharacteristic(this.Characteristic.CoolingThresholdTemperature)
       .setProps({ minValue: 17, maxValue: 33, minStep: 1 })
       .onGet(() => this._climateTargetTemp)
       .onSet((value) => this.setClimateTemperature(value as number));
@@ -488,22 +503,23 @@ export class MgSaicAccessory {
 
   /**
    * Handles a HomeKit Active toggle on the HeaterCooler service.
-   * Turning on passes the current _climateTargetTemp through the SAIC
-   * temperature index formula (idx = 3 + (°C - 17)) so the car targets the
-   * user's chosen temperature rather than always defaulting to 22 °C.
+   * Turning on passes the current _climateTargetTemp and _climateMode through the SAIC
+   * temperature index formula (idx = 3 + (°C - 17)) and sets the compressor flag when
+   * the mode is COOL.
    */
   async setClimateActive(value: boolean): Promise<void> {
     this.log.info(`${value ? 'Starting' : 'Stopping'} cabin pre-conditioning via HomeKit...`);
     try {
       if (value) {
         const idx = 3 + Math.round(this._climateTargetTemp - 17);
-        await this.client.startClimate(this.vin, idx);
+        const compressor = this._climateMode === this.Characteristic.TargetHeaterCoolerState.COOL;
+        await this.client.startClimate(this.vin, idx, compressor);
       } else {
         await this.client.stopClimate(this.vin);
       }
       this._lastStatus = {
         ...this._lastStatus,
-        basicVehicleStatus: { ...this.basicStatus(), remoteClimateStatus: value ? 2 : 0 },
+        basicVehicleStatus: { ...this.basicStatus(), remoteClimateStatus: value ? (this._climateMode === this.Characteristic.TargetHeaterCoolerState.COOL ? 3 : 2) : 0 },
       };
       this.log.info('Pre-conditioning command succeeded.');
     } catch (err) {
@@ -513,10 +529,32 @@ export class MgSaicAccessory {
   }
 
   /**
-   * Handles a HomeKit HeatingThresholdTemperature change on the HeaterCooler.
-   * Stores the new target and, if the climate is currently on, re-sends
-   * startClimate with the updated index so the car adjusts immediately rather
-   * than waiting for the user to toggle the switch off and back on.
+   * Handles a HomeKit TargetHeaterCoolerState change (HEAT / COOL).
+   * Stores the new mode and, if the climate is currently on, re-sends
+   * startClimate immediately with the updated compressor flag.
+   */
+  async setClimateMode(mode: number): Promise<void> {
+    this._climateMode = mode;
+    if (this.readClimateOn()) {
+      const modeLabel = mode === this.Characteristic.TargetHeaterCoolerState.COOL ? 'cool' : 'heat';
+      this.log.info(`Switching pre-conditioning mode to ${modeLabel}...`);
+      try {
+        const idx = 3 + Math.round(this._climateTargetTemp - 17);
+        const compressor = mode === this.Characteristic.TargetHeaterCoolerState.COOL;
+        await this.client.startClimate(this.vin, idx, compressor);
+        this.log.info(`Pre-conditioning mode switched to ${modeLabel}.`);
+      } catch (err) {
+        this.log.warn(`Pre-conditioning mode switch failed: ${(err as Error).message}`);
+        throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+      }
+    }
+  }
+
+  /**
+   * Handles a HomeKit HeatingThresholdTemperature or CoolingThresholdTemperature
+   * change on the HeaterCooler. Both characteristics are backed by the same
+   * _climateTargetTemp value. Stores the new target and, if the climate is currently
+   * on, re-sends startClimate with the updated index so the car adjusts immediately.
    */
   async setClimateTemperature(temp: number): Promise<void> {
     this._climateTargetTemp = temp;
@@ -524,7 +562,8 @@ export class MgSaicAccessory {
       this.log.info(`Adjusting pre-conditioning target to ${temp} °C...`);
       try {
         const idx = 3 + Math.round(temp - 17);
-        await this.client.startClimate(this.vin, idx);
+        const compressor = this._climateMode === this.Characteristic.TargetHeaterCoolerState.COOL;
+        await this.client.startClimate(this.vin, idx, compressor);
         this.log.info(`Pre-conditioning target updated to ${temp} °C.`);
       } catch (err) {
         this.log.warn(`Pre-conditioning temperature update failed: ${(err as Error).message}`);

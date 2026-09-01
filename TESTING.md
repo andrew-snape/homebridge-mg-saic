@@ -164,11 +164,15 @@ Straightforward on/off. Turn it on, confirm the rear windscreen's heating elemen
 
 ### Pre-conditioning
 
-**Confirmed working** against a real MG4 (software version SWi165 - R11, Australia) as of 0.9.4. Starting it from HomeKit took about 16 seconds and three polls — through two transient `code: 4` responses — before returning `code: 0` with `failureType=0`, and it physically ran the climate system.
+**Confirmed working (Heat mode)** against a real MG4 (software version SWi165 - R11, Australia) as of 0.9.4. Starting it from HomeKit took about 16 seconds and three polls — through two transient `code: 4` responses — before returning `code: 0` with `failureType=0`, and it physically ran the climate system (heater).
 
-Pre-conditioning is now exposed as a **HeaterCooler** service. The `HeatingThresholdTemperature` slider lets you pick a target from 17 °C to 33 °C (1 °C step, default 22 °C). The chosen temperature is translated to the SAIC temperature index (`idx = 3 + (°C − 17)`) and sent with `startClimate`. Sliding the temperature while the climate is already active re-sends the command immediately so the car adjusts without toggling the switch.
+Pre-conditioning is exposed as a **HeaterCooler** service with three controls:
 
-**It heats, and that is expected.** The compressor flag is not sent, and the MG4 heats with the compressor off. So it drives toward the target temperature using the PTC resistive heater. There is currently no cooling mode — `TargetHeaterCoolerState` is locked to Heat. `docs/API.md` has the compressor flag and fan-speed range if you want to extend this.
+- **Active** on/off — sends `startClimate` or `stopClimate`
+- **Mode** — Heat (no compressor, PTC resistive heater) or Cool (compressor on, AC). Tap the mode icon in the Home app to toggle
+- **Temperature slider** — 17 °C to 33 °C, 1 °C step. Sliding while active re-sends the command immediately. The SAIC temperature index formula is `idx = 3 + (°C − 17)`
+
+**Why Heat mode runs the heater:** no compressor flag is sent (param 22 absent), and the MG4 heats with the compressor off. **Cool mode sends param 22 = 1 (compressor on)**, which per `docs/API.md` is the correct flag for cooling, but this has **not yet been confirmed against real hardware**. If you test it and `remoteClimateStatus` comes back `3` (COOLING) and cold air blows, please report back.
 
 **This is not the "pre-drive" feature** in the newer iSmart phone apps. That's something else, and it has not been reverse-engineered by this project, the reference client, or the Home Assistant integration. Implementing it would need a fresh traffic capture from a current app.
 
@@ -191,7 +195,7 @@ This was observed for roughly 45 minutes straight, across several Homebridge res
 
 ## Known gaps at this stage
 
-- Pre-conditioning now uses a HeaterCooler service with a 17–33 °C temperature slider. No cooling (compressor flag not sent), and the **stop** path is still unexercised against real hardware — see section 5.
+- Pre-conditioning now uses a HeaterCooler service with Heat and Cool modes (17–33 °C slider). Cool mode sends the compressor flag (param 22 = 1) — not yet confirmed against real hardware. The **stop** path is still unexercised — see section 5.
 - The newer iSmart apps' "pre-drive" feature is not implemented and not reverse-engineered anywhere; it would need a fresh traffic capture.
 - Window open/close doesn't work, see section 5 above. Not a config option, not a bug to chase further unless you're on different hardware/firmware.
 - Only tested against a single vehicle. If your account has more than one, set the `vin` config option to pin a specific one explicitly rather than relying on "first vehicle returned."
