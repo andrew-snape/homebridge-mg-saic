@@ -70,6 +70,8 @@ const DOOR_FIELDS = [
 ];
 
 export class MgSaicAccessory {
+  static CHARGING_RECHECK_CYCLES = 4;
+
   /**
    * @param {import('homebridge').PlatformAccessory} accessory
    * @param {import('./saic-client.js').SaicClient} client
@@ -107,6 +109,14 @@ export class MgSaicAccessory {
     // characteristic reads for data from the other endpoint.
     this._lastStatus = null;
     this._lastCharging = null;
+    // Consecutive poll cycles in which the charging query has been skipped because the
+    // last successful reading showed the charger unplugged. A real Homebridge log showed
+    // /vehicle/charging/mgmtData timing out after a full 60s on every single poll cycle for
+    // over 90 minutes straight while /vehicle/status kept succeeding, i.e. the car was awake
+    // and reachable, it just had nothing plugged in to report on. Skipping the doomed query
+    // saves that 60s, but it's rechecked every CHARGING_RECHECK_CYCLES cycles in case a cable
+    // gets plugged in while we're not looking.
+    this._chargingSkipStreak = 0;
     // Stable cache for the last known-good temperature values; named explicitly
     // to avoid hidden-class churn from dynamic property assignment.
     this._lastInteriorTemperature = null;
@@ -576,9 +586,12 @@ export class MgSaicAccessory {
 
   /** Called by the platform on its poll interval. Pushes fresh values into HomeKit. */
   async refresh() {
+    const lastKnownUnplugged = this._lastCharging?.chrgMgmtData?.ccuOnbdChrgrPlugOn === 0;
+    const skipCharging = lastKnownUnplugged && this._chargingSkipStreak < MgSaicAccessory.CHARGING_RECHECK_CYCLES;
+
     const [statusResult, chargingResult] = await Promise.allSettled([
       this.client.vehicleStatus(this.vin),
-      this.client.chargingStatus(this.vin),
+      skipCharging ? Promise.resolve(null) : this.client.chargingStatus(this.vin),
     ]);
 
     // Re-throw auth errors so the platform can clear the token and re-login.
@@ -597,10 +610,15 @@ export class MgSaicAccessory {
       this.log.warn(`Status refresh failed: ${statusResult.reason.message}`);
     }
 
-    if (chargingResult.status === 'fulfilled') {
+    if (skipCharging) {
+      this._chargingSkipStreak++;
+      this.log.debug('Skipping charging refresh: charger was last seen unplugged.');
+    } else if (chargingResult.status === 'fulfilled') {
+      this._chargingSkipStreak = 0;
       this._lastCharging = chargingResult.value;
       this.pushChargingCharacteristics();
     } else {
+      this._chargingSkipStreak = 0;
       this.log.warn(`Charging refresh failed: ${chargingResult.reason.message}`);
     }
   }
