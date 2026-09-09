@@ -17,7 +17,7 @@ Exposes one MG EV as one HomeKit accessory with:
 - **Battery** — state of charge, charging state, low battery warning
 - **LockMechanism** — central locking, lock and unlock, writable
 - **ContactSensor** × 6 — driver door, passenger door, rear left door, rear right door, boot, bonnet
-- **HeaterCooler** — cabin pre-conditioning, i.e. remote climate / aircon. Confirmed working in 0.9.4. Target temperature is adjustable from 17 °C to 33 °C (1 °C step). Mode can be set to **Heat** (PTC resistive heater, no compressor) or **Cool** (AC compressor on). See below for details
+- **HeaterCooler** × 2 — cabin pre-conditioning, i.e. remote climate / aircon, as separate **Cabin Heat** and **Cabin Cool** tiles rather than one tile with a mode toggle. Each has its own 17 °C to 33 °C (1 °C step) target temperature slider. Heat is confirmed working since 0.9.4; Cool was added in 0.9.7 and is not yet confirmed. See below for details
 - **Outlet** — charging cable plugged in (`On`) and actively drawing (`InUse`)
 - **TemperatureSensor** × 2 — interior and exterior temperature. Falls back to the last known good reading and flags `StatusFault` if the API returns an unavailable-field sentinel instead of a real value
 - **Switch** × 2 — heated seats, left and right (off by default, see below)
@@ -27,20 +27,23 @@ Deliberately left out: tyre pressures, odometer, trip data, window open/close. T
 
 **Lock/unlock, heated seats, and rear defrost have all been confirmed working against real hardware.** The request format (`POST /vehicle/control` with an `rvcReqType`/`rvcParams` body) is ported from the reference `saic-python-client-ng` client. Unlocking has been confirmed to actually open the doors, seat heat and rear defrost have both been confirmed to physically engage, all on a real MG4 running **software version SWi165 - R11 (Australia)**.
 
-**Cabin pre-conditioning — the remote aircon — is a HeaterCooler service**, via `/vehicle/control` with `rvcReqType: "6"`, ported from the reference client's `start_ac`/`stop_ac`. **Starting it (Heat mode) is confirmed working** against the same MG4 (SWi165 - R11, Australia) and physically ran the climate system.
+**Cabin pre-conditioning — the remote aircon — is two HeaterCooler services**, via `/vehicle/control` with `rvcReqType: "6"`, ported from the reference client's `start_ac`/`stop_ac`. **Starting Cabin Heat is confirmed working** against the same MG4 (SWi165 - R11, Australia) and physically ran the climate system.
 
-The HeaterCooler tile in the Home app gives you:
-- **Active** — turns the climate on/off
-- **Mode** — Heat (PTC resistive heater, no compressor) or Cool (AC compressor on). Tap the mode icon to toggle
-- **Temperature slider** — 17 °C to 33 °C, 1 °C step. Sliding while active re-sends the command immediately so the car adjusts without toggling off and back on. The chosen temperature and mode persist across on/off cycles for the session
+Since the car has only one underlying climate system, the two tiles are mutually exclusive: turning one's `Active` on immediately shows the other as off in the Home app, rather than waiting for the next poll.
+
+**Cabin Heat** — PTC resistive heater, no compressor:
+- **Active** — turns it on/off
+- **Temperature slider** — 17 °C to 33 °C, 1 °C step. Sliding while active re-sends the command immediately so the car adjusts without toggling off and back on. The chosen temperature persists across on/off cycles for the session
+
+**Cabin Cool** — AC compressor on, same controls as Cabin Heat but sending param ID 22 = 1. **Not yet confirmed against real hardware** — added in 0.9.7. If you try it and it works (or doesn't), an issue or PR is very welcome.
+
+Each tile shows a plain on/off mode in the Home app (no mode-switch icon, unlike a single combined tile) — that's deliberate, so each side is independently addressable by Siri ("turn on Cabin Heat") and by HomeKit Automations (e.g. a scheduled switch for a cold morning vs. a hot afternoon).
 
 One thing worth knowing:
 
-- **It is not the "pre-drive" feature** in the newer iSmart phone apps. That's a different thing and nobody has reverse-engineered it — neither the reference client nor the Home Assistant integration implements it.
+- **This is not the "pre-drive" feature** in the newer iSmart phone apps. That's a different thing and nobody has reverse-engineered it — neither the reference client nor the Home Assistant integration implements it.
 
-**Note on Cool mode:** sending the compressor flag (param ID 22 = 1) is the right approach per `docs/API.md` and the reference client, but it hasn't been confirmed against real hardware yet. If you try it and it works (or doesn't), an issue or PR is very welcome.
-
-Stopping it has not been exercised yet against real hardware.
+Stopping either tile has not been exercised yet against real hardware.
 
 It's also the one control that's easy to overlook: it's governed by `enablePreconditioning` in config, and if that's off you get no tile in the Home app at all. Since 0.9.3 the startup log lists which services were exposed and which were left out, so you can check at a glance.
 

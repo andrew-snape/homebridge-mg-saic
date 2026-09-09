@@ -54,10 +54,10 @@
         "description": "SAIC's gateway can pause an account for 15 minutes if it sees too many logins. 15 minutes is the documented safe default."
       },
       "enablePreconditioning": {
-        "title": "Expose cabin pre-conditioning (aircon) HeaterCooler",
+        "title": "Expose cabin pre-conditioning (aircon) as Cabin Heat / Cabin Cool HeaterCoolers",
         "type": "boolean",
         "default": true,
-        "description": "The remote aircon / climate control, exposed as a HeaterCooler service. Confirmed working on a real MG4. Target temperature is adjustable from 17 °C to 33 °C; the compressor flag is not sent, so it always heats toward the target — there is currently no cooling mode. It is also not the pre-drive feature in the newer iSmart apps. See TESTING.md. With this off you get no tile in the Home app at all."
+        "description": "The remote aircon / climate control, exposed as two separate HeaterCooler tiles: 'Cabin Heat' (PTC resistive heater, confirmed working on a real MG4) and 'Cabin Cool' (AC compressor, added in 0.9.7, not yet confirmed against real hardware). Each has its own target temperature slider, 17 °C to 33 °C. Turning one on automatically shows the other as off, since the car only has one underlying climate system. It is also not the pre-drive feature in the newer iSmart apps. See TESTING.md. With this off you get no tile in the Home app at all."
       },
       "enableDoorSensors": {
         "title": "Expose door / boot / bonnet contact sensors",
