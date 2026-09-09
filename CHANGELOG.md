@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.9.7
+
+- **Pre-conditioning is now two separate HeaterCooler tiles, "Cabin Heat" and "Cabin Cool", instead of one tile with a mode-switch icon.** Each is locked to a single mode (Heat: compressor off/PTC resistive heater; Cool: compressor on/AC) and carries its own remembered 17–33 °C target temperature. Turning one Active on immediately shows the other as off in the Home app, since the car only has one underlying climate system — they were never independently controllable, just independently *addressable* now. This makes each side reachable directly from Siri ("turn on Cabin Heat") and from HomeKit Automations (e.g. a scheduled switch for a cold morning vs. a hot afternoon) without having to tap through a mode icon first. `enablePreconditioning` still controls whether both tiles appear; there's no separate config flag per tile. Cabin Heat behaves exactly as the old tile did in Heat mode (confirmed working); Cabin Cool behaves as the old tile did in Cool mode (still not confirmed against real hardware).
+
 ## 0.9.6
 
 - **Pre-conditioning HeaterCooler now supports Cool mode.** `TargetHeaterCoolerState` is no longer locked to HEAT — tapping the mode icon in the Home app switches between Heat and Cool. In Cool mode `startClimate` sends param 22 = 1 (AC compressor on), which per `docs/API.md` is the correct flag for cooling. Heat mode continues to work as before (no compressor flag, PTC resistive heater). **Cool mode has not yet been confirmed against real hardware** — if you test it and cold air blows (or doesn't), please report back. Changing mode while the climate is active re-sends the command immediately. `saic-client.startClimate` gains an optional `compressor` boolean parameter (default `false`); all existing behaviour is unchanged when it's absent.

@@ -86,7 +86,7 @@ While that's running, open the Home app on your phone, tap "+", "Add Accessory",
 - Lock tile matches whether the car is actually locked
 - The six contact sensors show closed if the doors, boot and bonnet are shut
 - The outlet shows off / not in use if the car isn't plugged in
-- The pre-conditioning HeaterCooler Active state matches whether the car's climate is currently on
+- The Cabin Heat / Cabin Cool HeaterCooler Active states match whether the car's climate is currently on, and on which side
 
 Leave it running for one full poll interval if you want to see the values refresh live rather than just on startup.
 
@@ -164,19 +164,20 @@ Straightforward on/off. Turn it on, confirm the rear windscreen's heating elemen
 
 ### Pre-conditioning
 
-**Confirmed working (Heat mode)** against a real MG4 (software version SWi165 - R11, Australia) as of 0.9.4. Starting it from HomeKit took about 16 seconds and three polls — through two transient `code: 4` responses — before returning `code: 0` with `failureType=0`, and it physically ran the climate system (heater).
+**Confirmed working (Cabin Heat)** against a real MG4 (software version SWi165 - R11, Australia) as of 0.9.4. Starting it from HomeKit took about 16 seconds and three polls — through two transient `code: 4` responses — before returning `code: 0` with `failureType=0`, and it physically ran the climate system (heater).
 
-Pre-conditioning is exposed as a **HeaterCooler** service with three controls:
+Since 0.9.7, pre-conditioning is exposed as **two separate HeaterCooler tiles** — Cabin Heat and Cabin Cool — instead of one tile with a mode-switch icon. Each has:
 
-- **Active** on/off — sends `startClimate` or `stopClimate`
-- **Mode** — Heat (no compressor, PTC resistive heater) or Cool (compressor on, AC). Tap the mode icon in the Home app to toggle
+- **Active** on/off — sends `startClimate` (with that tile's compressor flag) or `stopClimate`
 - **Temperature slider** — 17 °C to 33 °C, 1 °C step. Sliding while active re-sends the command immediately. The SAIC temperature index formula is `idx = 3 + (°C − 17)`
 
-**Why Heat mode runs the heater:** no compressor flag is sent (param 22 absent), and the MG4 heats with the compressor off. **Cool mode sends param 22 = 1 (compressor on)**, which per `docs/API.md` is the correct flag for cooling, but this has **not yet been confirmed against real hardware**. If you test it and `remoteClimateStatus` comes back `3` (COOLING) and cold air blows, please report back.
+Turning one tile's Active on immediately shows the other as off in the Home app (the car only has one underlying climate system, so they can't both be running).
+
+**Why Cabin Heat runs the heater:** no compressor flag is sent (param 22 absent), and the MG4 heats with the compressor off. **Cabin Cool sends param 22 = 1 (compressor on)**, which per `docs/API.md` is the correct flag for cooling, but this has **not yet been confirmed against real hardware**. If you test it and `remoteClimateStatus` comes back `3` (COOLING) and cold air blows, please report back.
 
 **This is not the "pre-drive" feature** in the newer iSmart phone apps. That's something else, and it has not been reverse-engineered by this project, the reference client, or the Home Assistant integration. Implementing it would need a fresh traffic capture from a current app.
 
-Still untested: the **stop** path. Tap Active off and confirm the car actually stops, and that `remoteClimateStatus` returns to `0`.
+Still untested: the **stop** path on either tile. Tap Active off and confirm the car actually stops, and that `remoteClimateStatus` returns to `0`.
 
 As with the other control commands, lock the car and turn the ignition off first (see the heated seats/rear defrost note above — the same `code: 8` vehicle-state rejection is likely to apply here too).
 
@@ -195,7 +196,7 @@ This was observed for roughly 45 minutes straight, across several Homebridge res
 
 ## Known gaps at this stage
 
-- Pre-conditioning now uses a HeaterCooler service with Heat and Cool modes (17–33 °C slider). Cool mode sends the compressor flag (param 22 = 1) — not yet confirmed against real hardware. The **stop** path is still unexercised — see section 5.
+- Pre-conditioning is now two separate HeaterCooler tiles, Cabin Heat and Cabin Cool (17–33 °C slider each), rather than one tile with a mode toggle. Cabin Cool sends the compressor flag (param 22 = 1) — not yet confirmed against real hardware. The **stop** path is still unexercised on either tile — see section 5.
 - The newer iSmart apps' "pre-drive" feature is not implemented and not reverse-engineered anywhere; it would need a fresh traffic capture.
 - Window open/close doesn't work, see section 5 above. Not a config option, not a bug to chase further unless you're on different hardware/firmware.
 - Only tested against a single vehicle. If your account has more than one, set the `vin` config option to pin a specific one explicitly rather than relying on "first vehicle returned."

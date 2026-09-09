@@ -17,6 +17,7 @@ const NO_FAULT = 0;
 const GENERAL_FAULT = 1;
 const BATTERY_LEVEL_LOW = 1;
 const BATTERY_LEVEL_NORMAL = 0;
+const INACTIVE = 0;
 
 function makeHap() {
   const Characteristic = {
@@ -272,48 +273,35 @@ describe('readTemperatureFault', () => {
 });
 
 // ---------------------------------------------------------------------------
-// readClimateOn
+// readHeatActive / readCoolActive
 // ---------------------------------------------------------------------------
 
-describe('readClimateOn', () => {
-  it('returns false when no data', () => {
+describe('readHeatActive / readCoolActive', () => {
+  it('are both false when no data', () => {
     const { acc } = makeAccessory();
-    expect(acc.readClimateOn()).toBe(false);
+    expect(acc.readHeatActive()).toBe(false);
+    expect(acc.readCoolActive()).toBe(false);
   });
 
-  it('returns true when remoteClimateStatus is non-zero', () => {
+  it('readHeatActive is true and readCoolActive is false when remoteClimateStatus is 2', () => {
     const { acc } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 2 } };
-    expect(acc.readClimateOn()).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// readHeaterCoolerState
-// ---------------------------------------------------------------------------
-
-describe('readHeaterCoolerState', () => {
-  it('returns INACTIVE when no data', () => {
-    const { acc } = makeAccessory();
-    expect(acc.readHeaterCoolerState()).toBe(0); // INACTIVE
+    expect(acc.readHeatActive()).toBe(true);
+    expect(acc.readCoolActive()).toBe(false);
   });
 
-  it('returns HEATING when remoteClimateStatus is 2', () => {
-    const { acc } = makeAccessory();
-    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 2 } };
-    expect(acc.readHeaterCoolerState()).toBe(2); // HEATING
-  });
-
-  it('returns COOLING when remoteClimateStatus is 3', () => {
+  it('readCoolActive is true and readHeatActive is false when remoteClimateStatus is 3', () => {
     const { acc } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 3 } };
-    expect(acc.readHeaterCoolerState()).toBe(3); // COOLING
+    expect(acc.readHeatActive()).toBe(false);
+    expect(acc.readCoolActive()).toBe(true);
   });
 
-  it('returns IDLE when remoteClimateStatus is 4 (fan only)', () => {
+  it('are both false when remoteClimateStatus is 4 (fan only)', () => {
     const { acc } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 4 } };
-    expect(acc.readHeaterCoolerState()).toBe(1); // IDLE
+    expect(acc.readHeatActive()).toBe(false);
+    expect(acc.readCoolActive()).toBe(false);
   });
 });
 
@@ -342,141 +330,157 @@ describe('readInteriorTempForClimate', () => {
 });
 
 // ---------------------------------------------------------------------------
-// setClimateActive
+// setHeatActive / setCoolActive
 // ---------------------------------------------------------------------------
 
-describe('setClimateActive', () => {
-  it('calls startClimate with temperature index and compressor=false in HEAT mode', async () => {
+describe('setHeatActive', () => {
+  it('calls startClimate with temperature index and compressor=false', async () => {
     const { acc, client } = makeAccessory();
     client.startClimate.mockResolvedValue({});
-    await acc.setClimateActive(true);
-    // Default target is 22 °C → idx = 3 + (22 - 17) = 8; default mode = HEAT → compressor=false
+    await acc.setHeatActive(true);
+    // Default target is 22 °C → idx = 3 + (22 - 17) = 8
     expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 8, false);
-    expect(acc.readClimateOn()).toBe(true);
-  });
-
-  it('calls startClimate with compressor=true when mode is COOL', async () => {
-    const { acc, client } = makeAccessory();
-    client.startClimate.mockResolvedValue({});
-    acc._climateMode = 2; // COOL
-    await acc.setClimateActive(true);
-    expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 8, true);
-    // Optimistic state should be COOLING (3)
-    expect(acc._lastStatus.basicVehicleStatus.remoteClimateStatus).toBe(3);
+    expect(acc.readHeatActive()).toBe(true);
   });
 
   it('calls startClimate with a custom temperature index when the target has been changed', async () => {
     const { acc, client } = makeAccessory();
     client.startClimate.mockResolvedValue({});
-    acc._climateTargetTemp = 25;
-    await acc.setClimateActive(true);
+    acc._heatTargetTemp = 25;
+    await acc.setHeatActive(true);
     // 25 °C → idx = 3 + (25 - 17) = 11
     expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 11, false);
+  });
+
+  it('mirrors Active=INACTIVE onto the Cool tile when turning on', async () => {
+    const { acc, client } = makeAccessory();
+    client.startClimate.mockResolvedValue({});
+    await acc.setHeatActive(true);
+    expect(acc.coolService.updateCharacteristic).toHaveBeenCalledWith(acc.Characteristic.Active, INACTIVE);
   });
 
   it('calls stopClimate and reflects the new state when turning off', async () => {
     const { acc, client } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 2 } };
     client.stopClimate.mockResolvedValue({});
-    await acc.setClimateActive(false);
+    await acc.setHeatActive(false);
     expect(client.stopClimate).toHaveBeenCalledWith('TESTVIN123');
-    expect(acc.readClimateOn()).toBe(false);
+    expect(acc.readHeatActive()).toBe(false);
   });
 
   it('throws a HapStatusError and leaves state unchanged when the command fails', async () => {
     const { acc, client } = makeAccessory();
     client.startClimate.mockRejectedValue(new Error('timeout'));
-    await expect(acc.setClimateActive(true)).rejects.toThrow('HapStatusError');
-    expect(acc.readClimateOn()).toBe(false);
+    await expect(acc.setHeatActive(true)).rejects.toThrow('HapStatusError');
+    expect(acc.readHeatActive()).toBe(false);
+  });
+});
+
+describe('setCoolActive', () => {
+  it('calls startClimate with temperature index and compressor=true', async () => {
+    const { acc, client } = makeAccessory();
+    client.startClimate.mockResolvedValue({});
+    await acc.setCoolActive(true);
+    expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 8, true);
+    expect(acc.readCoolActive()).toBe(true);
+  });
+
+  it('mirrors Active=INACTIVE onto the Heat tile when turning on', async () => {
+    const { acc, client } = makeAccessory();
+    client.startClimate.mockResolvedValue({});
+    await acc.setCoolActive(true);
+    expect(acc.heatService.updateCharacteristic).toHaveBeenCalledWith(acc.Characteristic.Active, INACTIVE);
+  });
+
+  it('calls stopClimate and reflects the new state when turning off', async () => {
+    const { acc, client } = makeAccessory();
+    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 3 } };
+    client.stopClimate.mockResolvedValue({});
+    await acc.setCoolActive(false);
+    expect(client.stopClimate).toHaveBeenCalledWith('TESTVIN123');
+    expect(acc.readCoolActive()).toBe(false);
+  });
+
+  it('throws a HapStatusError and leaves state unchanged when the command fails', async () => {
+    const { acc, client } = makeAccessory();
+    client.startClimate.mockRejectedValue(new Error('timeout'));
+    await expect(acc.setCoolActive(true)).rejects.toThrow('HapStatusError');
+    expect(acc.readCoolActive()).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// setClimateMode
+// setHeatTemperature / setCoolTemperature
 // ---------------------------------------------------------------------------
 
-describe('setClimateMode', () => {
-  it('stores the new mode', async () => {
+describe('setHeatTemperature', () => {
+  it('stores the new target temperature', async () => {
     const { acc } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 0 } };
-    await acc.setClimateMode(2); // COOL
-    expect(acc._climateMode).toBe(2);
+    await acc.setHeatTemperature(25);
+    expect(acc._heatTargetTemp).toBe(25);
   });
 
-  it('does not call startClimate when the climate is off', async () => {
+  it('does not call startClimate when the Heat tile is off', async () => {
     const { acc, client } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 0 } };
-    await acc.setClimateMode(2);
+    await acc.setHeatTemperature(25);
     expect(client.startClimate).not.toHaveBeenCalled();
   });
 
-  it('re-sends startClimate with compressor=true when switching to COOL while active', async () => {
+  it('re-sends startClimate with compressor=false when the Heat tile is on', async () => {
     const { acc, client } = makeAccessory();
-    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 2 } }; // currently heating
+    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 2 } };
     client.startClimate.mockResolvedValue({});
-    await acc.setClimateMode(2); // COOL
-    expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 8, true);
+    await acc.setHeatTemperature(30);
+    // 30 °C → idx = 3 + (30 - 17) = 16
+    expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 16, false);
   });
 
-  it('re-sends startClimate with compressor=false when switching to HEAT while active', async () => {
+  it('does not re-send when the Cool tile is on instead', async () => {
     const { acc, client } = makeAccessory();
-    acc._climateMode = 2; // currently COOL
-    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 3 } }; // currently cooling
-    client.startClimate.mockResolvedValue({});
-    await acc.setClimateMode(1); // HEAT
-    expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 8, false);
+    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 3 } };
+    await acc.setHeatTemperature(30);
+    expect(client.startClimate).not.toHaveBeenCalled();
   });
 
   it('throws a HapStatusError when the re-send fails', async () => {
     const { acc, client } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 2 } };
     client.startClimate.mockRejectedValue(new Error('timeout'));
-    await expect(acc.setClimateMode(2)).rejects.toThrow('HapStatusError');
+    await expect(acc.setHeatTemperature(30)).rejects.toThrow('HapStatusError');
   });
 });
 
-// ---------------------------------------------------------------------------
-// setClimateTemperature
-// ---------------------------------------------------------------------------
-
-describe('setClimateTemperature', () => {
+describe('setCoolTemperature', () => {
   it('stores the new target temperature', async () => {
     const { acc } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 0 } };
-    await acc.setClimateTemperature(25);
-    expect(acc._climateTargetTemp).toBe(25);
+    await acc.setCoolTemperature(24);
+    expect(acc._coolTargetTemp).toBe(24);
   });
 
-  it('does not call startClimate when the climate is off', async () => {
+  it('does not call startClimate when the Cool tile is off', async () => {
     const { acc, client } = makeAccessory();
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 0 } };
-    await acc.setClimateTemperature(25);
+    await acc.setCoolTemperature(24);
     expect(client.startClimate).not.toHaveBeenCalled();
   });
 
-  it('re-sends startClimate with compressor=false in HEAT mode when climate is on', async () => {
+  it('re-sends startClimate with compressor=true when the Cool tile is on', async () => {
     const { acc, client } = makeAccessory();
-    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 2 } };
-    client.startClimate.mockResolvedValue({});
-    await acc.setClimateTemperature(30);
-    // 30 °C → idx = 3 + (30 - 17) = 16
-    expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 16, false);
-  });
-
-  it('re-sends startClimate with compressor=true in COOL mode when climate is on', async () => {
-    const { acc, client } = makeAccessory();
-    acc._climateMode = 2; // COOL
     acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 3 } };
     client.startClimate.mockResolvedValue({});
-    await acc.setClimateTemperature(24);
+    await acc.setCoolTemperature(24);
+    // 24 °C → idx = 3 + (24 - 17) = 10
     expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 10, true);
   });
 
   it('throws a HapStatusError when the re-send fails', async () => {
     const { acc, client } = makeAccessory();
-    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 2 } };
+    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 3 } };
     client.startClimate.mockRejectedValue(new Error('timeout'));
-    await expect(acc.setClimateTemperature(30)).rejects.toThrow('HapStatusError');
+    await expect(acc.setCoolTemperature(24)).rejects.toThrow('HapStatusError');
   });
 });
 

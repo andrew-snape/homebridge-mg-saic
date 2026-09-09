@@ -270,7 +270,7 @@ Range 17 °C (index 3) to 33 °C (index 19). So the reference client's default o
 | `3` | Cooling (compressor active) |
 | `4` | Fan only (assumed by elimination, not independently confirmed) |
 
-This plugin currently treats any non-zero value as simply "on", which is correct for a plain on/off Switch but discards the heat/cool/fan distinction.
+Since 0.9.7 this plugin exposes Heat and Cool as two separate HeaterCooler tiles (`Cabin Heat`/`Cabin Cool`) rather than one Switch or one tile with a mode toggle, so the heat/cool distinction is preserved: each tile's `Active` reads `true` only for its own `remoteClimateStatus` value (`2` for Heat, `3` for Cool). `4` (fan only) reads as inactive on both, since neither tile's own command produced it.
 
 **The newer iSmart apps' "pre-drive" feature is not this command** and has not been reverse-engineered anywhere — neither `saic-python-client-ng` nor `mg-saic-ha` implements or mentions it. Adding it would need a fresh traffic capture from a current app.
 

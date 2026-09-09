@@ -39,6 +39,15 @@
  * functional (driver/passenger) - conflating the two would risk labelling
  * the wrong seat depending on market.
  *
+ * Pre-conditioning is exposed as two separate HeaterCooler services, "Cabin Heat"
+ * and "Cabin Cool", rather than one tile with a mode toggle. Each is locked to a
+ * single TargetHeaterCoolerState (HEAT or COOL respectively, via validValues) and
+ * carries its own remembered target temperature (_heatTargetTemp/_coolTargetTemp,
+ * 17-33 °C). Turning one Active on sends startClimate with that tile's compressor
+ * flag (off for Heat, on for Cool) and immediately mirrors Active=INACTIVE onto
+ * the other tile, since the car only has one underlying climate system. See
+ * accessory.ts for the fuller version of this comment.
+ *
  * Window open/close was tried and confirmed NOT to work: the car
  * consistently rejects the command with "Request failed. Please check the
  * vehicle status and try again." regardless of lock state, door-open state,
@@ -88,7 +97,7 @@ export class MgSaicAccessory {
     this.setupBatteryService();
     this.setupLockService();
     this.setupOutletService();
-    if (this.enablePreconditioning) this.setupPreconditioningHeaterCooler();
+    if (this.enablePreconditioning) this.setupPreconditioningHeaterCoolers();
     if (this.enableDoorSensors) this.setupContactSensors();
     if (this.enableTemperatureSensors) this.setupTemperatureSensors();
     if (this.enableHeatedSeats) this.setupHeatedSeatSwitches();
@@ -102,13 +111,11 @@ export class MgSaicAccessory {
     // to avoid hidden-class churn from dynamic property assignment.
     this._lastInteriorTemperature = null;
     this._lastExteriorTemperature = null;
-    // User-chosen pre-conditioning target temperature in °C (17-33). Persists
-    // across on/off toggles so turning the climate back on reuses the last-set
-    // temperature rather than resetting to 22 °C.
-    this._climateTargetTemp = 22;
-    // User-chosen mode: HEAT (compressor off) or COOL (compressor on). Persists
-    // across on/off toggles.
-    this._climateMode = 1; // 1 = HEAT (matches Characteristic.TargetHeaterCoolerState.HEAT)
+    // User-chosen target temperature in °C (17-33) for each pre-conditioning tile.
+    // Persists across on/off toggles. Kept separate per tile since Heat and Cool
+    // are now independent HeaterCooler services rather than one shared mode.
+    this._heatTargetTemp = 22;
+    this._coolTargetTemp = 22;
 
     this.logExposedServices();
   }
@@ -126,7 +133,7 @@ export class MgSaicAccessory {
     const record = (on, label) => {
       (on ? exposed : disabled).push(label);
     };
-    record(this.enablePreconditioning, 'Pre-conditioning');
+    record(this.enablePreconditioning, 'Pre-conditioning (Cabin Heat / Cabin Cool)');
     record(this.enableDoorSensors, 'Door sensors');
     record(this.enableTemperatureSensors, 'Temperature sensors');
     record(this.enableHeatedSeats, 'Heated seats');
@@ -188,40 +195,67 @@ export class MgSaicAccessory {
       .onGet(() => this.readCharging());
   }
 
-  setupPreconditioningHeaterCooler() {
-    this.preconditionService = this.accessory.getService('Pre-conditioning')
-      ?? this.accessory.addService(this.Service.HeaterCooler, 'Pre-conditioning', 'preconditioning');
+  setupPreconditioningHeaterCoolers() {
+    // "Cabin Heat" — locked to TargetHeaterCoolerState.HEAT. Active on sends
+    // startClimate with the compressor off (PTC resistive heater).
+    this.heatService = this.accessory.getService('Cabin Heat')
+      ?? this.accessory.addService(this.Service.HeaterCooler, 'Cabin Heat', 'preconditionHeat');
 
-    this.preconditionService.getCharacteristic(this.Characteristic.Active)
-      .onGet(() => (this.readClimateOn()
+    this.heatService.getCharacteristic(this.Characteristic.Active)
+      .onGet(() => (this.readHeatActive()
         ? this.Characteristic.Active.ACTIVE
         : this.Characteristic.Active.INACTIVE))
-      .onSet((value) => this.setClimateActive(value === this.Characteristic.Active.ACTIVE));
+      .onSet((value) => this.setHeatActive(value === this.Characteristic.Active.ACTIVE));
 
-    this.preconditionService.getCharacteristic(this.Characteristic.CurrentHeaterCoolerState)
-      .onGet(() => this.readHeaterCoolerState());
+    this.heatService.getCharacteristic(this.Characteristic.CurrentHeaterCoolerState)
+      .onGet(() => (this.readHeatActive()
+        ? this.Characteristic.CurrentHeaterCoolerState.HEATING
+        : this.Characteristic.CurrentHeaterCoolerState.INACTIVE));
 
-    this.preconditionService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
-      .setProps({ validValues: [
-        this.Characteristic.TargetHeaterCoolerState.HEAT,
-        this.Characteristic.TargetHeaterCoolerState.COOL,
-      ] })
-      .onGet(() => this._climateMode)
-      .onSet((value) => this.setClimateMode(value));
+    this.heatService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
+      .setProps({ validValues: [this.Characteristic.TargetHeaterCoolerState.HEAT] })
+      .onGet(() => this.Characteristic.TargetHeaterCoolerState.HEAT)
+      .onSet(() => { /* no-op: HEAT is the only valid value on this tile */ });
 
-    this.preconditionService.getCharacteristic(this.Characteristic.CurrentTemperature)
+    this.heatService.getCharacteristic(this.Characteristic.CurrentTemperature)
       .setProps({ minValue: -50, maxValue: 80 })
       .onGet(() => this.readInteriorTempForClimate());
 
-    this.preconditionService.getCharacteristic(this.Characteristic.HeatingThresholdTemperature)
+    this.heatService.getCharacteristic(this.Characteristic.HeatingThresholdTemperature)
       .setProps({ minValue: 17, maxValue: 33, minStep: 1 })
-      .onGet(() => this._climateTargetTemp)
-      .onSet((value) => this.setClimateTemperature(value));
+      .onGet(() => this._heatTargetTemp)
+      .onSet((value) => this.setHeatTemperature(value));
 
-    this.preconditionService.getCharacteristic(this.Characteristic.CoolingThresholdTemperature)
+    // "Cabin Cool" — locked to TargetHeaterCoolerState.COOL. Active on sends
+    // startClimate with the compressor on (AC). Not yet confirmed against real
+    // hardware, see docs/API.md and TESTING.md.
+    this.coolService = this.accessory.getService('Cabin Cool')
+      ?? this.accessory.addService(this.Service.HeaterCooler, 'Cabin Cool', 'preconditionCool');
+
+    this.coolService.getCharacteristic(this.Characteristic.Active)
+      .onGet(() => (this.readCoolActive()
+        ? this.Characteristic.Active.ACTIVE
+        : this.Characteristic.Active.INACTIVE))
+      .onSet((value) => this.setCoolActive(value === this.Characteristic.Active.ACTIVE));
+
+    this.coolService.getCharacteristic(this.Characteristic.CurrentHeaterCoolerState)
+      .onGet(() => (this.readCoolActive()
+        ? this.Characteristic.CurrentHeaterCoolerState.COOLING
+        : this.Characteristic.CurrentHeaterCoolerState.INACTIVE));
+
+    this.coolService.getCharacteristic(this.Characteristic.TargetHeaterCoolerState)
+      .setProps({ validValues: [this.Characteristic.TargetHeaterCoolerState.COOL] })
+      .onGet(() => this.Characteristic.TargetHeaterCoolerState.COOL)
+      .onSet(() => { /* no-op: COOL is the only valid value on this tile */ });
+
+    this.coolService.getCharacteristic(this.Characteristic.CurrentTemperature)
+      .setProps({ minValue: -50, maxValue: 80 })
+      .onGet(() => this.readInteriorTempForClimate());
+
+    this.coolService.getCharacteristic(this.Characteristic.CoolingThresholdTemperature)
       .setProps({ minValue: 17, maxValue: 33, minStep: 1 })
-      .onGet(() => this._climateTargetTemp)
-      .onSet((value) => this.setClimateTemperature(value));
+      .onGet(() => this._coolTargetTemp)
+      .onSet((value) => this.setCoolTemperature(value));
   }
 
   setupContactSensors() {
@@ -301,16 +335,14 @@ export class MgSaicAccessory {
     return locked ? this.Characteristic.LockCurrentState.SECURED : this.Characteristic.LockCurrentState.UNSECURED;
   }
 
-  readClimateOn() {
-    return Boolean(this._lastStatus?.basicVehicleStatus?.remoteClimateStatus);
+  /** remoteClimateStatus === 2: the car is running the PTC resistive heater. */
+  readHeatActive() {
+    return this._lastStatus?.basicVehicleStatus?.remoteClimateStatus === 2;
   }
 
-  readHeaterCoolerState() {
-    const status = this._lastStatus?.basicVehicleStatus?.remoteClimateStatus;
-    if (!status) return this.Characteristic.CurrentHeaterCoolerState.INACTIVE;
-    if (status === 2) return this.Characteristic.CurrentHeaterCoolerState.HEATING;
-    if (status === 3) return this.Characteristic.CurrentHeaterCoolerState.COOLING;
-    return this.Characteristic.CurrentHeaterCoolerState.IDLE;
+  /** remoteClimateStatus === 3: the car is running the AC compressor. */
+  readCoolActive() {
+    return this._lastStatus?.basicVehicleStatus?.remoteClimateStatus === 3;
   }
 
   readInteriorTempForClimate() {
@@ -429,56 +461,97 @@ export class MgSaicAccessory {
     }
   }
 
-  async setClimateActive(value) {
-    this.log.info(`${value ? 'Starting' : 'Stopping'} cabin pre-conditioning via HomeKit...`);
+  /**
+   * Handles a HomeKit Active toggle on the "Cabin Heat" tile. Since the car has
+   * only one underlying climate system, a successful "on" also mirrors
+   * Active=INACTIVE onto the Cool tile immediately rather than waiting for the
+   * next poll.
+   */
+  async setHeatActive(value) {
+    this.log.info(`${value ? 'Starting' : 'Stopping'} cabin heat pre-conditioning via HomeKit...`);
     try {
       if (value) {
-        const idx = 3 + Math.round(this._climateTargetTemp - 17);
-        const compressor = this._climateMode === this.Characteristic.TargetHeaterCoolerState.COOL;
-        await this.client.startClimate(this.vin, idx, compressor);
+        const idx = 3 + Math.round(this._heatTargetTemp - 17);
+        await this.client.startClimate(this.vin, idx, false);
       } else {
         await this.client.stopClimate(this.vin);
       }
-      const activeStatus = this._climateMode === this.Characteristic.TargetHeaterCoolerState.COOL ? 3 : 2;
       this._lastStatus = {
         ...this._lastStatus,
-        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, remoteClimateStatus: value ? activeStatus : 0 },
+        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, remoteClimateStatus: value ? 2 : 0 },
       };
-      this.log.info('Pre-conditioning command succeeded.');
+      if (value) {
+        this.coolService?.updateCharacteristic(this.Characteristic.Active, this.Characteristic.Active.INACTIVE);
+      }
+      this.log.info('Cabin heat command succeeded.');
     } catch (err) {
-      this.log.warn(`Pre-conditioning command failed: ${err.message}`);
+      this.log.warn(`Cabin heat command failed: ${err.message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
 
-  async setClimateMode(mode) {
-    this._climateMode = mode;
-    if (this.readClimateOn()) {
-      const modeLabel = mode === this.Characteristic.TargetHeaterCoolerState.COOL ? 'cool' : 'heat';
-      this.log.info(`Switching pre-conditioning mode to ${modeLabel}...`);
+  /**
+   * Handles a HomeKit Active toggle on the "Cabin Cool" tile. Mirror of
+   * setHeatActive with the compressor on (AC). Not yet confirmed against real
+   * hardware, see docs/API.md and TESTING.md.
+   */
+  async setCoolActive(value) {
+    this.log.info(`${value ? 'Starting' : 'Stopping'} cabin cool pre-conditioning via HomeKit...`);
+    try {
+      if (value) {
+        const idx = 3 + Math.round(this._coolTargetTemp - 17);
+        await this.client.startClimate(this.vin, idx, true);
+      } else {
+        await this.client.stopClimate(this.vin);
+      }
+      this._lastStatus = {
+        ...this._lastStatus,
+        basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, remoteClimateStatus: value ? 3 : 0 },
+      };
+      if (value) {
+        this.heatService?.updateCharacteristic(this.Characteristic.Active, this.Characteristic.Active.INACTIVE);
+      }
+      this.log.info('Cabin cool command succeeded.');
+    } catch (err) {
+      this.log.warn(`Cabin cool command failed: ${err.message}`);
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  /**
+   * Handles a HeatingThresholdTemperature change on the "Cabin Heat" tile.
+   * Stores the new target and, if that tile is currently active, re-sends
+   * startClimate with the updated index so the car adjusts immediately.
+   */
+  async setHeatTemperature(temp) {
+    this._heatTargetTemp = temp;
+    if (this.readHeatActive()) {
+      this.log.info(`Adjusting cabin heat target to ${temp} °C...`);
       try {
-        const idx = 3 + Math.round(this._climateTargetTemp - 17);
-        const compressor = mode === this.Characteristic.TargetHeaterCoolerState.COOL;
-        await this.client.startClimate(this.vin, idx, compressor);
-        this.log.info(`Pre-conditioning mode switched to ${modeLabel}.`);
+        const idx = 3 + Math.round(temp - 17);
+        await this.client.startClimate(this.vin, idx, false);
+        this.log.info(`Cabin heat target updated to ${temp} °C.`);
       } catch (err) {
-        this.log.warn(`Pre-conditioning mode switch failed: ${err.message}`);
+        this.log.warn(`Cabin heat temperature update failed: ${err.message}`);
         throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
       }
     }
   }
 
-  async setClimateTemperature(temp) {
-    this._climateTargetTemp = temp;
-    if (this.readClimateOn()) {
-      this.log.info(`Adjusting pre-conditioning target to ${temp} °C...`);
+  /**
+   * Handles a CoolingThresholdTemperature change on the "Cabin Cool" tile.
+   * Mirror of setHeatTemperature with the compressor on.
+   */
+  async setCoolTemperature(temp) {
+    this._coolTargetTemp = temp;
+    if (this.readCoolActive()) {
+      this.log.info(`Adjusting cabin cool target to ${temp} °C...`);
       try {
         const idx = 3 + Math.round(temp - 17);
-        const compressor = this._climateMode === this.Characteristic.TargetHeaterCoolerState.COOL;
-        await this.client.startClimate(this.vin, idx, compressor);
-        this.log.info(`Pre-conditioning target updated to ${temp} °C.`);
+        await this.client.startClimate(this.vin, idx, true);
+        this.log.info(`Cabin cool target updated to ${temp} °C.`);
       } catch (err) {
-        this.log.warn(`Pre-conditioning temperature update failed: ${err.message}`);
+        this.log.warn(`Cabin cool temperature update failed: ${err.message}`);
         throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
       }
     }
@@ -535,16 +608,26 @@ export class MgSaicAccessory {
   pushStatusCharacteristics() {
     this.lockService.updateCharacteristic(this.Characteristic.LockCurrentState, this.readLockState());
     if (this.enablePreconditioning) {
-      this.preconditionService.updateCharacteristic(
+      const interiorTemp = this.readInteriorTempForClimate();
+      this.heatService.updateCharacteristic(
         this.Characteristic.Active,
-        this.readClimateOn() ? this.Characteristic.Active.ACTIVE : this.Characteristic.Active.INACTIVE,
+        this.readHeatActive() ? this.Characteristic.Active.ACTIVE : this.Characteristic.Active.INACTIVE,
       );
-      this.preconditionService.updateCharacteristic(
-        this.Characteristic.CurrentHeaterCoolerState, this.readHeaterCoolerState(),
+      this.heatService.updateCharacteristic(
+        this.Characteristic.CurrentHeaterCoolerState,
+        this.readHeatActive() ? this.Characteristic.CurrentHeaterCoolerState.HEATING : this.Characteristic.CurrentHeaterCoolerState.INACTIVE,
       );
-      this.preconditionService.updateCharacteristic(
-        this.Characteristic.CurrentTemperature, this.readInteriorTempForClimate(),
+      this.heatService.updateCharacteristic(this.Characteristic.CurrentTemperature, interiorTemp);
+
+      this.coolService.updateCharacteristic(
+        this.Characteristic.Active,
+        this.readCoolActive() ? this.Characteristic.Active.ACTIVE : this.Characteristic.Active.INACTIVE,
       );
+      this.coolService.updateCharacteristic(
+        this.Characteristic.CurrentHeaterCoolerState,
+        this.readCoolActive() ? this.Characteristic.CurrentHeaterCoolerState.COOLING : this.Characteristic.CurrentHeaterCoolerState.INACTIVE,
+      );
+      this.coolService.updateCharacteristic(this.Characteristic.CurrentTemperature, interiorTemp);
     }
     if (this.enableDoorSensors) {
       for (const [, field, i] of DOOR_FIELDS.map(([n, f], i) => [n, f, i])) {
