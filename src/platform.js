@@ -59,25 +59,38 @@ export class MgSaicPlatform {
     }
 
     let vin = this.configuredVin;
+    let vehicles = [];
+    try {
+      const list = await this.client.vehicleList();
+      vehicles = list.vinList ?? list.vehicles ?? [];
+    } catch (err) {
+      this.log.warn(`Could not fetch vehicle list, will retry on next poll: ${err.message}`);
+      if (!vin) return;
+    }
+
     if (!vin) {
-      try {
-        const list = await this.client.vehicleList();
-        const vehicles = list.vinList ?? list.vehicles ?? [];
-        if (vehicles.length === 0) {
-          this.log.warn('No vehicles returned by the account.');
-          return;
-        }
-        if (vehicles.length > 1) {
-          this.log.warn(
-            `Account returned ${vehicles.length} vehicles; this plugin exposes one only. `
-            + 'Set the "vin" option in config to pin a specific vehicle. Using the first one for now.',
-          );
-        }
-        vin = vehicles[0].vin;
-      } catch (err) {
-        this.log.warn(`Could not fetch vehicle list, will retry on next poll: ${err.message}`);
+      if (vehicles.length === 0) {
+        this.log.warn('No vehicles returned by the account.');
         return;
       }
+      if (vehicles.length > 1) {
+        this.log.warn(
+          `Account returned ${vehicles.length} vehicles; this plugin exposes one only. `
+          + 'Set the "vin" option in config to pin a specific vehicle. Using the first one for now.',
+        );
+      }
+      vin = vehicles[0].vin;
+    }
+
+    // The vehicle's series code (e.g. "EH32...") pins which climate control behaviour
+    // applies - different MG4 sub-variants (e.g. the entry-level "Urban" AH4EM) use a
+    // different climate protocol than the standard EH32 this plugin targets, per
+    // townsmcp/mg-saic-ha's vehicle profiles. Logged so a report of unexpected
+    // pre-conditioning behaviour can be matched against the right profile.
+    const matchedVehicle = vehicles.find((v) => v.vin === vin);
+    if (matchedVehicle?.series) {
+      const name = [matchedVehicle.brandName, matchedVehicle.modelName].filter(Boolean).join(' ');
+      this.log.info(`Vehicle series: ${matchedVehicle.series}${name ? ` (${name})` : ''}`);
     }
 
     this.registerAccessory(vin);
