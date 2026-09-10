@@ -267,7 +267,7 @@ This is not an encoding bug in this plugin. `mg-saic-client==0.9.4` (the PyPI pa
 
 What's left isn't resolvable from code comparison alone: either a firmware/market difference `mg-saic-ha` hasn't encountered, or the vehicle's own climate logic substituting heat for a "cool" command under conditions unsuited to running the compressor (a real behaviour on some EVs, not a protocol bug). Confirming either needs a repeat test under different conditions, or a decrypted traffic capture of the iSmart app itself cooling, to compare against what this plugin sends. See TESTING.md for the full trail. This plugin's Cabin Cool tile stays disabled (turning it on fails immediately, nothing is sent to the car) until one of those turns up something actionable.
 
-**Fan speed is not a 0–5 range on this car.** Only 1 (low), 2 (medium) and 3 (high) are fan speeds. Bytes **4 and 5 trigger heating and front defrost instead** — the HA integration's own notes record sending 5 as "High" putting a car into front defrost. This plugin sends fan speed 2, which is safely inside the real range, but anything exposing a 0–5 slider on the strength of the reference client's signature would be wrong.
+**Fan speed is not a 0–5 range on this car.** Only 1 (low), 2 (medium) and 3 (high) are ordinary fan speeds. Byte **5 is the dedicated front-defrost trigger** — see the "Front window defrost" subsection below, this plugin now sends it deliberately via `startFrontDefrost`. Byte **4 is unconfirmed and unused by this client** — the HA integration's own notes record it as also doing something unexpected on MG4-family cars, but its exact meaning hasn't been pinned down. This plugin's ordinary climate commands (Cabin Heat/Cool) always send fan speed 2, safely inside the confirmed-safe range; anything exposing a raw 0–5 slider on the strength of the reference client's signature would be wrong.
 
 **`remoteClimateStatus` decode** (confirmed from decrypted iSmart traffic in that project, not by this one):
 
@@ -281,6 +281,25 @@ What's left isn't resolvable from code comparison alone: either a firmware/marke
 Since 0.9.7 this plugin exposes Heat and Cool as two separate HeaterCooler tiles (`Cabin Heat`/`Cabin Cool`) rather than one Switch or one tile with a mode toggle, so the heat/cool distinction is preserved: each tile's `Active` reads `true` only for its own `remoteClimateStatus` value (`2` for Heat, `3` for Cool). `4` (fan only) reads as inactive on both, since neither tile's own command produced it.
 
 **The newer iSmart apps' "pre-drive" feature is not this command** and has not been reverse-engineered anywhere — neither `saic-python-client-ng` nor `mg-saic-ha` implements or mentions it. Adding it would need a fresh traffic capture from a current app.
+
+### Front window defrost (`rvcReqType: "6"`, fan speed 5)
+
+Added in 0.9.9. Same command family as pre-conditioning above, but with fan speed 5 and a fixed temperature index of 8 (22 °C) instead of the usual fan 2 / chosen temperature:
+
+```json
+{
+  "rvcReqType": "6",
+  "rvcParams": [
+    { "paramId": 19,  "paramValue": "BQ==" },
+    { "paramId": 20,  "paramValue": "CA==" },
+    { "paramId": 22,  "paramValue": "AQ==" },
+    { "paramId": 255, "paramValue": "AAAAAA==" }
+  ],
+  "vin": "<sha256 hex of VIN>"
+}
+```
+
+Ported from `mg-saic-client`'s own `start_front_defrost` (`fan_speed=5, ac_on=True, temperature_idx=8`), the same PyPI package pulled for the Cabin Cool investigation above. Its docstring/comments note the fixed 22 °C matches what the iSmart app itself always sends for defrost, regardless of the app's own temperature slider — your climate temperature setting is left untouched, only this one-off request uses 22 °C. **Not yet confirmed against real hardware by this plugin** — see TESTING.md. There's no separate stop command; the car auto-cancels defrost on its own after roughly 10 minutes, or send the ordinary stop-climate request (fan 0, compressor off) to end it early.
 
 ### Windows (`rvcReqType: "3"`) — tried, does not work
 

@@ -162,6 +162,14 @@ Two caveats on how far that goes. It confirms the **requests** are right and the
 
 Straightforward on/off. Turn it on, confirm the rear windscreen's heating element actually engages (you should be able to feel warmth on the glass within a minute or two), turn it off, confirm it stops.
 
+### Front window defrost
+
+Added in 0.9.9 (`enableFrontDefrost`, off by default). **Not yet confirmed against real hardware.** Sends the same `rvcReqType "6"` climate command as pre-conditioning, but with fan speed 5 instead of the usual 2, fixed at 22 °C (index 8) — ported from `mg-saic-client`'s own `start_front_defrost` (fan_speed=5, ac_on=True, temperature_idx=8), which documents the fixed temperature as matching what the iSmart app itself sends.
+
+Unlike rear defrost this has no dedicated status field to read back — the car reports it via `remoteClimateStatus`, the same field Heat/Cool use, and defrost's own value in it isn't confirmed for this vehicle profile (this plugin's own comments already warn fan byte 5 does *something* different on MG4-family cars, without independently confirming what). So the HomeKit switch tracks only what was last commanded locally, not a value polled from the car — turning Heat or Cool on will locally flip the Front Defrost switch back off (since all three share one climate system), but the switch won't reflect defrost starting or stopping on the car's own initiative, and it resets to Off on every Homebridge restart. That's an accepted tradeoff given the car auto-cancels defrost on its own after roughly 10 minutes anyway.
+
+To test: turn it on, confirm the front windscreen actually demists/warms within a minute or two (and that the iSmart app or `remoteClimateStatus` shows *something* running), turn it off (or wait ~10 minutes for it to auto-cancel), confirm it stops. Worth also confirming turning Cabin Heat or Cabin Cool on while defrost is running actually takes over the climate system, matching the mutual-exclusion this plugin assumes.
+
 ### Pre-conditioning
 
 **Confirmed working (Cabin Heat)** against a real MG4 (software version SWi165 - R11, Australia) as of 0.9.4. Starting it from HomeKit took about 16 seconds and three polls — through two transient `code: 4` responses — before returning `code: 0` with `failureType=0`, and it physically ran the climate system (heater).
@@ -218,6 +226,7 @@ This was observed for roughly 45 minutes straight, across several Homebridge res
 ## Known gaps at this stage
 
 - Pre-conditioning is now two separate HeaterCooler tiles, Cabin Heat and Cabin Cool (17–33 °C slider each), rather than one tile with a mode toggle. Cabin Cool's Active toggle is disabled — confirmed on real hardware to heat at maximum instead of cooling, see section 5. The **stop** path is still unexercised on either tile — see section 5.
+- Front window defrost (`enableFrontDefrost`, off by default) is new in 0.9.9 and not yet confirmed against real hardware at all — see section 5.
 - The newer iSmart apps' "pre-drive" feature is not implemented and not reverse-engineered anywhere; it would need a fresh traffic capture.
 - Window open/close doesn't work, see section 5 above. Not a config option, not a bug to chase further unless you're on different hardware/firmware.
 - Only tested against a single vehicle. If your account has more than one, set the `vin` config option to pin a specific one explicitly rather than relying on "first vehicle returned."

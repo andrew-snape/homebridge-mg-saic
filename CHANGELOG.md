@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.9.9
+
+- **Added a Front window defrost switch** (`enableFrontDefrost`, off by default, **not yet confirmed against real hardware**). Sends the same `rvcReqType "6"` climate command as pre-conditioning, but with fan speed 5 and a fixed 22 °C instead of the usual fan 2 / chosen temperature — ported from `mg-saic-client`'s own `start_front_defrost` (fan_speed=5, ac_on=True, temperature_idx=8), the same reference library pulled for the Cabin Cool investigation in 0.9.8. Unlike rear defrost the car has no dedicated status field for this, so the switch's On/Off state tracks only what HomeKit last commanded, not a value read back from the car (it resets to Off on a Homebridge restart, which is fine given the car auto-cancels defrost on its own after roughly 10 minutes). Turning it on mirrors `Active=INACTIVE` onto both Cabin Heat and Cabin Cool, since all three share the one climate system; turning Heat on does the same back onto Front Defrost. Turning it off sends the general stop-climate command. See `TESTING.md`/`docs/API.md` for the source trail.
+
 ## 0.9.8
 
 - **Fixed: Cabin Cool's Active toggle no longer sends a command confirmed to do the opposite of what it says.** A real MG4 test (HomeKit Cool tile, target 17 °C) showed the plugin's cooling command — param 22 = 1, the AC compressor flag documented in 0.9.6/0.9.7 as "the correct flag for cooling" — actually runs the cabin heater at maximum, confirmed by both `remoteClimateStatus` and the iSmart app's own display. `setCoolActive` now refuses to turn the tile on: it throws immediately without sending anything to the car, so the Home app tile bounces back to off instead of silently blasting hot air. Turning it off still works.

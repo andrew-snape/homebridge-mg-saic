@@ -25,7 +25,7 @@
  * it can't report (see tyre pressure fields in a live capture), so both
  * readers treat implausible values as a fault rather than trusting them.
  *
- * Heated seats, rear defrost and cabin pre-conditioning are writable
+ * Heated seats, rear defrost, front defrost and cabin pre-conditioning are writable
  * Switches, same as LockMechanism. Heated seats/rear defrost are confirmed
  * working against real hardware; pre-conditioning is wired to
  * /vehicle/control (rvcReqType "6"), confirmed working in 0.9.4. Note it asks
@@ -38,6 +38,13 @@
  * (frontLeftSeatHeatLevel) while the reference client's own naming is
  * functional (driver/passenger) - conflating the two would risk labelling
  * the wrong seat depending on market.
+ *
+ * Front defrost (enableFrontDefrost, off by default, not yet confirmed against real
+ * hardware) reuses the same rvcReqType "6" climate command as pre-conditioning, but with
+ * fan speed 5 instead of the usual 2. Its On/Off state is tracked locally rather than
+ * read back from the car (see setFrontDefrost), since the car has no confirmed status
+ * field for it and auto-cancels after roughly 10 minutes on its own. See accessory.ts
+ * for the fuller version of this comment.
  *
  * Pre-conditioning is exposed as two separate HeaterCooler services, "Cabin Heat"
  * and "Cabin Cool", rather than one tile with a mode toggle. Each is locked to a
@@ -77,11 +84,11 @@ export class MgSaicAccessory {
   /**
    * @param {import('homebridge').PlatformAccessory} accessory
    * @param {import('./saic-client.js').SaicClient} client
-   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean, enableTemperatureSensors: boolean, enableHeatedSeats: boolean, enableRearDefrost: boolean }} opts
+   * @param {{ vin: string, log: any, api: any, enablePreconditioning: boolean, enableDoorSensors: boolean, enableTemperatureSensors: boolean, enableHeatedSeats: boolean, enableRearDefrost: boolean, enableFrontDefrost: boolean }} opts
    */
   constructor(accessory, client, {
     vin, log, api, enablePreconditioning, enableDoorSensors, enableTemperatureSensors,
-    enableHeatedSeats, enableRearDefrost,
+    enableHeatedSeats, enableRearDefrost, enableFrontDefrost,
   }) {
     this.accessory = accessory;
     this.client = client;
@@ -96,6 +103,10 @@ export class MgSaicAccessory {
     this.enableTemperatureSensors = enableTemperatureSensors;
     this.enableHeatedSeats = enableHeatedSeats;
     this.enableRearDefrost = enableRearDefrost;
+    this.enableFrontDefrost = enableFrontDefrost;
+    // Tracks only what HomeKit last commanded for front defrost, not a value read back
+    // from the car - see setFrontDefrost for why.
+    this._frontDefrostActive = false;
 
     this.setupInfoService();
     this.setupBatteryService();
@@ -106,6 +117,7 @@ export class MgSaicAccessory {
     if (this.enableTemperatureSensors) this.setupTemperatureSensors();
     if (this.enableHeatedSeats) this.setupHeatedSeatSwitches();
     if (this.enableRearDefrost) this.setupRearDefrostSwitch();
+    if (this.enableFrontDefrost) this.setupFrontDefrostSwitch();
 
     // Cached latest reads, so a slow poll of one endpoint doesn't block
     // characteristic reads for data from the other endpoint.
@@ -150,6 +162,7 @@ export class MgSaicAccessory {
     record(this.enableTemperatureSensors, 'Temperature sensors');
     record(this.enableHeatedSeats, 'Heated seats');
     record(this.enableRearDefrost, 'Rear defrost');
+    record(this.enableFrontDefrost, 'Front defrost');
 
     this.log.info(`HomeKit services exposed: ${exposed.join(', ')}.`);
     if (disabled.length) {
@@ -318,6 +331,14 @@ export class MgSaicAccessory {
     this.rearDefrostService.getCharacteristic(this.Characteristic.On)
       .onGet(() => Boolean(this._lastStatus?.basicVehicleStatus?.rmtHtdRrWndSt))
       .onSet((value) => this.setRearDefrost(value));
+  }
+
+  setupFrontDefrostSwitch() {
+    this.frontDefrostService = this.accessory.getService('Front window defrost')
+      ?? this.accessory.addService(this.Service.Switch, 'Front window defrost', 'frontDefrost');
+    this.frontDefrostService.getCharacteristic(this.Characteristic.On)
+      .onGet(() => this._frontDefrostActive)
+      .onSet((value) => this.setFrontDefrost(value));
   }
 
   // ------------------------------------------------------------- data reads
@@ -493,6 +514,8 @@ export class MgSaicAccessory {
       };
       if (value) {
         this.coolService?.updateCharacteristic(this.Characteristic.Active, this.Characteristic.Active.INACTIVE);
+        this._frontDefrostActive = false;
+        this.frontDefrostService?.updateCharacteristic(this.Characteristic.On, false);
       }
       this.log.info('Cabin heat command succeeded.');
     } catch (err) {
@@ -581,6 +604,42 @@ export class MgSaicAccessory {
       this.log.info('Rear defrost command succeeded.');
     } catch (err) {
       this.log.warn(`Rear defrost command failed: ${err.message}`);
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+  }
+
+  /**
+   * Handles the "Front window defrost" switch. Unlike rear defrost, the car has no
+   * dedicated status field for this: remoteClimateStatus is shared with Heat/Cool, and
+   * defrost's own value in it isn't confirmed for this vehicle profile (see TESTING.md).
+   * So On/Off here tracks only what HomeKit last commanded (_frontDefrostActive), not a
+   * value read back from the car - it won't survive a Homebridge restart, which is fine
+   * given the car auto-cancels defrost after roughly 10 minutes anyway. Turning on sends
+   * the dedicated front-defrost command (fan 5, compressor on, 22 °C - see
+   * saic-client.js) and mirrors Active=INACTIVE onto Heat/Cool, since all three share the
+   * one climate system. Turning off sends the general stopClimate command, since the car
+   * has no separate stop for defrost specifically.
+   */
+  async setFrontDefrost(value) {
+    this.log.info(`${value ? 'Starting' : 'Stopping'} front window defrost via HomeKit...`);
+    try {
+      if (value) {
+        await this.client.startFrontDefrost(this.vin);
+      } else {
+        await this.client.stopClimate(this.vin);
+      }
+      this._frontDefrostActive = value;
+      if (value) {
+        this._lastStatus = {
+          ...this._lastStatus,
+          basicVehicleStatus: { ...this._lastStatus?.basicVehicleStatus, remoteClimateStatus: 0 },
+        };
+        this.heatService?.updateCharacteristic(this.Characteristic.Active, this.Characteristic.Active.INACTIVE);
+        this.coolService?.updateCharacteristic(this.Characteristic.Active, this.Characteristic.Active.INACTIVE);
+      }
+      this.log.info('Front defrost command succeeded.');
+    } catch (err) {
+      this.log.warn(`Front defrost command failed: ${err.message}`);
       throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
     }
   }
@@ -679,6 +738,9 @@ export class MgSaicAccessory {
       this.rearDefrostService.updateCharacteristic(
         this.Characteristic.On, Boolean(this._lastStatus?.basicVehicleStatus?.rmtHtdRrWndSt),
       );
+    }
+    if (this.enableFrontDefrost) {
+      this.frontDefrostService.updateCharacteristic(this.Characteristic.On, this._frontDefrostActive);
     }
   }
 

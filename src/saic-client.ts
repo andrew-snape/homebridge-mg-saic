@@ -447,12 +447,14 @@ export class SaicClient {
   // rvcReqType "6" is climate control. paramId 19 = fan speed (0-5), 20 = temperature index,
   // 22 = AC compressor on/off. Ported from the reference client's own start_ac/stop_ac
   // convenience wrappers rather than the full fan-speed/temperature range. Fan bytes 4 and 5
-  // are NOT higher fan speeds — they trigger heat/front-defrost on MG4-family cars.
+  // are NOT higher fan speeds — 5 is the dedicated front-defrost trigger (see
+  // startFrontDefrost below); 4 is unconfirmed and unused by this client.
   //
   // compressor=false (the reference client default): car heats with the PTC resistive heater,
   //   remoteClimateStatus returns 2 (HEATING). Confirmed working on a real MG4.
   // compressor=true: AC compressor engaged for cooling, remoteClimateStatus expected to return
-  //   3 (COOLING). Not yet confirmed against real hardware.
+  //   3 (COOLING). Confirmed NOT to work as documented: a real MG4 test ran the heater at
+  //   maximum instead of cooling. See the plugin's TESTING.md/docs/API.md before touching this.
 
   startClimate(vin: string, temperatureIdx = 8, compressor = false): Promise<unknown> {
     const params: { paramId: number; paramValue: string }[] = [
@@ -472,6 +474,27 @@ export class SaicClient {
       rvcParams: [
         { paramId: 19,  paramValue: b64([0]) },
         { paramId: 22,  paramValue: b64([0]) },
+        { paramId: 255, paramValue: b64([0, 0, 0, 0]) },
+      ],
+    });
+  }
+
+  /**
+   * Front windscreen defrost: same rvcReqType "6" climate command as startClimate, but with
+   * fan speed 5 and a fixed 22°C (index 8) instead of the usual fan 2 / chosen temperature.
+   * Ported from mg-saic-client's own start_front_defrost (fan_speed=5, ac_on=True,
+   * temperature_idx=8), which documents 22°C as always fixed regardless of any user
+   * temperature setting - this matches what the iSmart app itself sends. Not yet confirmed
+   * against real hardware by this plugin. The car auto-cancels defrost after roughly 10
+   * minutes on its own; there's no dedicated stop command, use stopClimate() to end it early.
+   */
+  startFrontDefrost(vin: string): Promise<unknown> {
+    return this.vehicleControl(vin, {
+      rvcReqType: '6',
+      rvcParams: [
+        { paramId: 19,  paramValue: b64([5]) },
+        { paramId: 20,  paramValue: b64([8]) },
+        { paramId: 22,  paramValue: b64([1]) },
         { paramId: 255, paramValue: b64([0, 0, 0, 0]) },
       ],
     });
