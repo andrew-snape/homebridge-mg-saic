@@ -1,8 +1,9 @@
 name: Publish to npm
 
-# Fires whenever you publish a GitHub Release. Tag the release with the same
-# version as package.json (e.g. v0.2.0 for "version": "0.2.0"), publish it,
-# and this pushes that version to npm automatically.
+# Fires whenever a GitHub Release is published. Since auto-release.yml creates
+# and publishes a release automatically for every package.json version bump on
+# main, this normally fires on its own - no manual tagging needed. Publishing
+# a release by hand still works the same way, if ever needed.
 on:
   release:
     types: [published]
