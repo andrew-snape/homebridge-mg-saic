@@ -38,6 +38,7 @@ export class MgSaicPlatform {
     // to work on a real MG4, see README.md and CHANGELOG.md, so it was removed entirely.
     this.enableHeatedSeats = config.enableHeatedSeats ?? false;
     this.enableRearDefrost = config.enableRearDefrost ?? false;
+    this.enableFrontDefrost = config.enableFrontDefrost ?? false;
     this.configuredVin = config.vin;
 
     this.client = new SaicClient(this.region, { log: this.log });
@@ -117,6 +118,7 @@ export class MgSaicPlatform {
       enableTemperatureSensors: this.enableTemperatureSensors,
       enableHeatedSeats: this.enableHeatedSeats,
       enableRearDefrost: this.enableRearDefrost,
+      enableFrontDefrost: this.enableFrontDefrost,
     });
 
     // The accessory constructor above adds or reuses services according to the current

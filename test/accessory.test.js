@@ -101,6 +101,7 @@ function makeAccessory(overrides = {}) {
     controlRearWindowHeat: vi.fn(),
     startClimate: vi.fn(),
     stopClimate: vi.fn(),
+    startFrontDefrost: vi.fn(),
   };
 
   const api = {
@@ -119,6 +120,7 @@ function makeAccessory(overrides = {}) {
     enableTemperatureSensors: true,
     enableHeatedSeats: true,
     enableRearDefrost: true,
+    enableFrontDefrost: true,
     ...overrides,
   });
 
@@ -404,6 +406,54 @@ describe('setCoolActive', () => {
   });
 });
 
+describe('setFrontDefrost', () => {
+  it('calls startFrontDefrost and reflects the new state when turning on', async () => {
+    const { acc, client } = makeAccessory();
+    client.startFrontDefrost.mockResolvedValue({});
+    await acc.setFrontDefrost(true);
+    expect(client.startFrontDefrost).toHaveBeenCalledWith('TESTVIN123');
+    expect(acc._frontDefrostActive).toBe(true);
+  });
+
+  it('mirrors Active=INACTIVE onto Heat and Cool when turning on', async () => {
+    const { acc, client } = makeAccessory();
+    client.startFrontDefrost.mockResolvedValue({});
+    await acc.setFrontDefrost(true);
+    expect(acc.heatService.updateCharacteristic).toHaveBeenCalledWith(acc.Characteristic.Active, INACTIVE);
+    expect(acc.coolService.updateCharacteristic).toHaveBeenCalledWith(acc.Characteristic.Active, INACTIVE);
+  });
+
+  it('calls stopClimate when turning off', async () => {
+    const { acc, client } = makeAccessory();
+    client.startFrontDefrost.mockResolvedValue({});
+    await acc.setFrontDefrost(true);
+    client.stopClimate.mockResolvedValue({});
+    await acc.setFrontDefrost(false);
+    expect(client.stopClimate).toHaveBeenCalledWith('TESTVIN123');
+  });
+
+  it('throws a HapStatusError and leaves state unchanged when the command fails', async () => {
+    const { acc, client } = makeAccessory();
+    client.startFrontDefrost.mockRejectedValue(new Error('timeout'));
+    await expect(acc.setFrontDefrost(true)).rejects.toThrow('HapStatusError');
+    expect(acc._frontDefrostActive).toBe(false);
+  });
+});
+
+describe('setHeatActive clears front defrost', () => {
+  it('turns the front defrost switch off (locally) when Heat turns on', async () => {
+    const { acc, client } = makeAccessory();
+    client.startFrontDefrost.mockResolvedValue({});
+    await acc.setFrontDefrost(true);
+
+    client.startClimate.mockResolvedValue({});
+    await acc.setHeatActive(true);
+
+    expect(acc._frontDefrostActive).toBe(false);
+    expect(acc.frontDefrostService.updateCharacteristic).toHaveBeenCalledWith(acc.Characteristic.On, false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // setHeatTemperature / setCoolTemperature
 // ---------------------------------------------------------------------------
@@ -507,6 +557,7 @@ describe('logExposedServices', () => {
       enableTemperatureSensors: false,
       enableHeatedSeats: false,
       enableRearDefrost: false,
+      enableFrontDefrost: false,
     });
     expect(lines(log)).toMatch(/HomeKit services exposed: Battery, Lock, Charging outlet\./);
   });

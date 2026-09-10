@@ -81,6 +81,12 @@
         "type": "boolean",
         "default": false,
         "description": "Confirmed working against real hardware. Off by default since it's a newer control, see TESTING.md."
+      },
+      "enableFrontDefrost": {
+        "title": "Expose front window defrost switch",
+        "type": "boolean",
+        "default": false,
+        "description": "Not yet confirmed against real hardware. Off by default, see TESTING.md."
       }
     }
   }

@@ -22,6 +22,7 @@ Exposes one MG EV as one HomeKit accessory with:
 - **TemperatureSensor** × 2 — interior and exterior temperature. Falls back to the last known good reading and flags `StatusFault` if the API returns an unavailable-field sentinel instead of a real value
 - **Switch** × 2 — heated seats, left and right (off by default, see below)
 - **Switch** — rear window defrost (off by default, see below)
+- **Switch** — front window defrost (off by default, not yet confirmed against real hardware, see below)
 
 Deliberately left out: tyre pressures, odometer, trip data, window open/close. Tyre pressure, odometer and trip data have no sensible HomeKit home. Window open/close was tried and does not work, see below.
 
@@ -46,6 +47,8 @@ One thing worth knowing:
 Stopping either tile has not been exercised yet against real hardware.
 
 It's also the one control that's easy to overlook: it's governed by `enablePreconditioning` in config, and if that's off you get no tile in the Home app at all. Since 0.9.3 the startup log lists which services were exposed and which were left out, so you can check at a glance.
+
+**Front window defrost is a separate Switch (`enableFrontDefrost`, off by default, not yet confirmed against real hardware)** — added in 0.9.9. Unlike rear defrost it has no dedicated status field on the car: turning it on sends the same climate command as Cabin Heat/Cool but with fan speed 5 instead of 2 (the exact combination confirmed correct by `mg-saic-client`'s own `start_front_defrost`, ported from decrypted iSmart traffic), fixed at 22 °C, and mirrors Active=INACTIVE onto both Cabin Heat and Cabin Cool since all three share the one climate system. Turning it off sends the general stop-climate command. Its On/Off state in HomeKit only reflects what was last commanded, not a value read back from the car, and won't survive a Homebridge restart — reasonable given the car auto-cancels defrost on its own after roughly 10 minutes. If you test it against real hardware, an issue or PR reporting the result is very welcome.
 
 **Window open/close was tried and does not work.** Same request shape as the reference client, byte-verified, but the car consistently rejects it with `code 8`, `"Request failed. Please check the vehicle status and try again."`, whether the car was locked, unlocked with the driver's door held open, or freshly started, all tried against the same MG4 (SWi165 - R11, Australia). There's no config option or switch for it; the low-level `controlWindow`/`WINDOW_ID` request is still in `src/saic-client.js` for reference, unused, in case a firmware update or a different vehicle ever behaves differently. See `CHANGELOG.md`.
 
@@ -78,7 +81,8 @@ Via Homebridge Config UI X (the plugin ships a `config.schema.json`, which drive
       "enableDoorSensors": true,
       "enableTemperatureSensors": true,
       "enableHeatedSeats": false,
-      "enableRearDefrost": false
+      "enableRearDefrost": false,
+      "enableFrontDefrost": false
     }
   ]
 }
