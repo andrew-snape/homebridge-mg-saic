@@ -173,7 +173,11 @@ Since 0.9.7, pre-conditioning is exposed as **two separate HeaterCooler tiles** 
 
 Turning one tile's Active on immediately shows the other as off in the Home app (the car only has one underlying climate system, so they can't both be running).
 
-**Why Cabin Heat runs the heater:** no compressor flag is sent (param 22 absent), and the MG4 heats with the compressor off. **Cabin Cool sends param 22 = 1 (compressor on)**, which per `docs/API.md` is the correct flag for cooling, but this has **not yet been confirmed against real hardware**. If you test it and `remoteClimateStatus` comes back `3` (COOLING) and cold air blows, please report back.
+**Why Cabin Heat runs the heater:** no compressor flag is sent (param 22 absent), and the MG4 heats with the compressor off.
+
+**Cabin Cool is confirmed broken and disabled as of the next release.** Sending param 22 = 1 (compressor on) was tested against a real MG4 via HomeKit (Cool tile, target 17 °C): the HomeKit tile showed "Cooling to 17.0°", but the official iSmart app showed the climate system running heat at maximum, and it physically blew hot air, not cold. `setCoolActive` now refuses to turn the tile on at all (it throws immediately, without sending anything to the car) rather than repeat that command; turning it off still works.
+
+This was cross-checked against [townsmcp/mg-saic-ha](https://github.com/townsmcp/mg-saic-ha), the Home Assistant integration for the same API. Its MG4 profile (series `EH32`) uses the same fan-speed range this plugin already sends (1/2/3, medium = 2, values 4-5 reserved for heat/defrost) and the same `climate_status_cool`/`climate_status_heat` read-back values (3/2) this plugin already expects — so the fan speed byte isn't the problem. It also confirms cooling is meant to be selected by an `ac_on` flag, conceptually the same thing param 22 is meant to be. Neither of those rules out what's actually different: the HA integration's raw request construction wasn't accessible to compare byte-for-byte (GitHub's code search needs a signed-in session), so there may be an additional param, a different value, or a different paramId entirely that this plugin isn't sending. Fixing this properly needs a fresh traffic capture of a real cooling command — from the iSmart app itself, or from mg-saic-ha's raw request log — rather than another guess against real hardware.
 
 **This is not the "pre-drive" feature** in the newer iSmart phone apps. That's something else, and it has not been reverse-engineered by this project, the reference client, or the Home Assistant integration. Implementing it would need a fresh traffic capture from a current app.
 
@@ -196,7 +200,7 @@ This was observed for roughly 45 minutes straight, across several Homebridge res
 
 ## Known gaps at this stage
 
-- Pre-conditioning is now two separate HeaterCooler tiles, Cabin Heat and Cabin Cool (17–33 °C slider each), rather than one tile with a mode toggle. Cabin Cool sends the compressor flag (param 22 = 1) — not yet confirmed against real hardware. The **stop** path is still unexercised on either tile — see section 5.
+- Pre-conditioning is now two separate HeaterCooler tiles, Cabin Heat and Cabin Cool (17–33 °C slider each), rather than one tile with a mode toggle. Cabin Cool's Active toggle is disabled — confirmed on real hardware to heat at maximum instead of cooling, see section 5. The **stop** path is still unexercised on either tile — see section 5.
 - The newer iSmart apps' "pre-drive" feature is not implemented and not reverse-engineered anywhere; it would need a fresh traffic capture.
 - Window open/close doesn't work, see section 5 above. Not a config option, not a bug to chase further unless you're on different hardware/firmware.
 - Only tested against a single vehicle. If your account has more than one, set the `vin` config option to pin a specific one explicitly rather than relying on "first vehicle returned."

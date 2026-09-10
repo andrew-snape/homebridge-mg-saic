@@ -43,17 +43,26 @@
  * and "Cabin Cool", rather than one tile with a mode toggle. Each is locked to a
  * single TargetHeaterCoolerState (HEAT or COOL respectively, via validValues) and
  * carries its own remembered target temperature (_heatTargetTemp/_coolTargetTemp,
- * 17-33 °C) and its own threshold-temperature characteristic. Turning one Active
- * on sends startClimate with that tile's compressor flag (off for Heat, on for
- * Cool) and immediately mirrors Active=INACTIVE onto the other tile, since the
- * car only has one underlying climate system - the two tiles can't both be
- * running at once. CurrentHeaterCoolerState per tile is derived from
- * remoteClimateStatus (2=HEATING for the Heat tile, 3=COOLING for the Cool tile,
- * anything else reads as INACTIVE on both). If the target temperature is changed
- * on a tile that's currently active, startClimate is re-sent immediately with the
- * new index so the car adjusts. Two separate tiles (rather than one with a mode
- * icon) make each side independently addressable from Siri and HomeKit
- * Automations, e.g. "turn on Cabin Heat" or a 7am/2pm scheduled switch.
+ * 17-33 °C) and its own threshold-temperature characteristic. Turning Heat's
+ * Active on sends startClimate with the compressor off, and immediately mirrors
+ * Active=INACTIVE onto the Cool tile, since the car only has one underlying
+ * climate system - the two tiles can't both be running at once.
+ * CurrentHeaterCoolerState per tile is derived from remoteClimateStatus
+ * (2=HEATING for the Heat tile, 3=COOLING for the Cool tile, anything else reads
+ * as INACTIVE on both). If the target temperature is changed on a tile that's
+ * currently active, startClimate is re-sent immediately with the new index so
+ * the car adjusts. Two separate tiles (rather than one with a mode icon) make
+ * each side independently addressable from Siri and HomeKit Automations, e.g.
+ * "turn on Cabin Heat" or a 7am/2pm scheduled switch.
+ *
+ * Cabin Cool's Active toggle is disabled (setCoolActive rejects turning it on):
+ * a real MG4 test confirmed sending the compressor flag (see docs/API.md) does
+ * not cool the car, it runs the PTC heater at maximum instead - both
+ * remoteClimateStatus and the iSmart app agreed. See TESTING.md for the
+ * comparison against townsmcp/mg-saic-ha's MG4 profile, which rules out fan
+ * speed as the cause but doesn't explain the reversal either. Turning Cool off
+ * still works, in case a genuinely cooling car (remoteClimateStatus 3 from some
+ * other trigger) needs to be stopped from HomeKit.
  *
  * Window open/close was tried and confirmed NOT to work: the car
  * consistently rejects the command with "Request failed. Please check the
@@ -280,9 +289,8 @@ export class MgSaicAccessory {
       .onGet(() => this._heatTargetTemp)
       .onSet((value) => this.setHeatTemperature(value as number));
 
-    // "Cabin Cool" — locked to TargetHeaterCoolerState.COOL. Active on sends
-    // startClimate with the compressor on (AC). Not yet confirmed against real
-    // hardware, see docs/API.md and TESTING.md.
+    // "Cabin Cool" — locked to TargetHeaterCoolerState.COOL. Turning Active on
+    // is disabled; see setCoolActive and TESTING.md for why.
     this.coolService = this.accessory.getService('Cabin Cool')
       ?? this.accessory.addService(this.Service.HeaterCooler, 'Cabin Cool', 'preconditionCool');
 
@@ -559,26 +567,28 @@ export class MgSaicAccessory {
   }
 
   /**
-   * Handles a HomeKit Active toggle on the "Cabin Cool" tile. Mirror of
-   * setHeatActive with the compressor on (AC) at _coolTargetTemp. Not yet
-   * confirmed against real hardware, see docs/API.md and TESTING.md.
+   * Handles a HomeKit Active toggle on the "Cabin Cool" tile. Turning it ON is
+   * refused: sending the AC compressor flag was confirmed on a real MG4 to run
+   * the cabin heater at maximum instead of cooling it (see TESTING.md), so this
+   * plugin no longer sends that command until the correct one is known. Turning
+   * it OFF still works, in case remoteClimateStatus reads 3 from some other
+   * trigger and needs stopping from HomeKit.
    */
   async setCoolActive(value: boolean): Promise<void> {
-    this.log.info(`${value ? 'Starting' : 'Stopping'} cabin cool pre-conditioning via HomeKit...`);
+    if (value) {
+      this.log.warn(
+        'Cabin Cool is disabled: the compressor command is confirmed to heat the cabin at maximum '
+        + 'instead of cooling it on real hardware. See TESTING.md.',
+      );
+      throw new this.api.hap.HapStatusError(this.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
+    }
+    this.log.info('Stopping cabin cool pre-conditioning via HomeKit...');
     try {
-      if (value) {
-        const idx = 3 + Math.round(this._coolTargetTemp - 17);
-        await this.client.startClimate(this.vin, idx, true);
-      } else {
-        await this.client.stopClimate(this.vin);
-      }
+      await this.client.stopClimate(this.vin);
       this._lastStatus = {
         ...this._lastStatus,
-        basicVehicleStatus: { ...this.basicStatus(), remoteClimateStatus: value ? 3 : 0 },
+        basicVehicleStatus: { ...this.basicStatus(), remoteClimateStatus: 0 },
       };
-      if (value) {
-        this.heatService?.updateCharacteristic(this.Characteristic.Active, this.Characteristic.Active.INACTIVE);
-      }
       this.log.info('Cabin cool command succeeded.');
     } catch (err) {
       this.log.warn(`Cabin cool command failed: ${(err as Error).message}`);

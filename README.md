@@ -17,7 +17,7 @@ Exposes one MG EV as one HomeKit accessory with:
 - **Battery** — state of charge, charging state, low battery warning
 - **LockMechanism** — central locking, lock and unlock, writable
 - **ContactSensor** × 6 — driver door, passenger door, rear left door, rear right door, boot, bonnet
-- **HeaterCooler** × 2 — cabin pre-conditioning, i.e. remote climate / aircon, as separate **Cabin Heat** and **Cabin Cool** tiles rather than one tile with a mode toggle. Each has its own 17 °C to 33 °C (1 °C step) target temperature slider. Heat is confirmed working since 0.9.4; Cool was added in 0.9.7 and is not yet confirmed. See below for details
+- **HeaterCooler** × 2 — cabin pre-conditioning, i.e. remote climate / aircon, as separate **Cabin Heat** and **Cabin Cool** tiles rather than one tile with a mode toggle. Each has its own 17 °C to 33 °C (1 °C step) target temperature slider. Heat is confirmed working since 0.9.4; Cool's Active toggle is disabled since it's confirmed to heat the cabin instead of cooling it. See below for details
 - **Outlet** — charging cable plugged in (`On`) and actively drawing (`InUse`)
 - **TemperatureSensor** × 2 — interior and exterior temperature. Falls back to the last known good reading and flags `StatusFault` if the API returns an unavailable-field sentinel instead of a real value
 - **Switch** × 2 — heated seats, left and right (off by default, see below)
@@ -35,7 +35,7 @@ Since the car has only one underlying climate system, the two tiles are mutually
 - **Active** — turns it on/off
 - **Temperature slider** — 17 °C to 33 °C, 1 °C step. Sliding while active re-sends the command immediately so the car adjusts without toggling off and back on. The chosen temperature persists across on/off cycles for the session
 
-**Cabin Cool** — AC compressor on, same controls as Cabin Heat but sending param ID 22 = 1. **Not yet confirmed against real hardware** — added in 0.9.7. If you try it and it works (or doesn't), an issue or PR is very welcome.
+**Cabin Cool** — added in 0.9.7 sending param ID 22 = 1 (AC compressor on) as the same command as Cabin Heat. **Confirmed NOT to work**: tested against a real MG4 via HomeKit, it ran the heater at maximum instead of cooling, both by the iSmart app's own display and by feel. Turning the tile's Active on now fails immediately instead of repeating that command; turning it off still works. See `TESTING.md`/`docs/API.md` for what's been ruled out so far. If you can capture a real cooling command's raw request (from the iSmart app or from `mg-saic-ha`), an issue or PR is very welcome.
 
 Each tile shows a plain on/off mode in the Home app (no mode-switch icon, unlike a single combined tile) — that's deliberate, so each side is independently addressable by Siri ("turn on Cabin Heat") and by HomeKit Automations (e.g. a scheduled switch for a cold morning vs. a hot afternoon).
 
