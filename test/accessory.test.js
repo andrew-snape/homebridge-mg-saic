@@ -377,19 +377,13 @@ describe('setHeatActive', () => {
 });
 
 describe('setCoolActive', () => {
-  it('calls startClimate with temperature index and compressor=true', async () => {
+  // Turning Cool on is disabled: a real MG4 test confirmed the compressor
+  // command heats the cabin at maximum instead of cooling it (TESTING.md).
+  it('refuses to turn on and never calls startClimate', async () => {
     const { acc, client } = makeAccessory();
-    client.startClimate.mockResolvedValue({});
-    await acc.setCoolActive(true);
-    expect(client.startClimate).toHaveBeenCalledWith('TESTVIN123', 8, true);
-    expect(acc.readCoolActive()).toBe(true);
-  });
-
-  it('mirrors Active=INACTIVE onto the Heat tile when turning on', async () => {
-    const { acc, client } = makeAccessory();
-    client.startClimate.mockResolvedValue({});
-    await acc.setCoolActive(true);
-    expect(acc.heatService.updateCharacteristic).toHaveBeenCalledWith(acc.Characteristic.Active, INACTIVE);
+    await expect(acc.setCoolActive(true)).rejects.toThrow('HapStatusError');
+    expect(client.startClimate).not.toHaveBeenCalled();
+    expect(acc.readCoolActive()).toBe(false);
   });
 
   it('calls stopClimate and reflects the new state when turning off', async () => {
@@ -401,11 +395,12 @@ describe('setCoolActive', () => {
     expect(acc.readCoolActive()).toBe(false);
   });
 
-  it('throws a HapStatusError and leaves state unchanged when the command fails', async () => {
+  it('throws a HapStatusError and leaves state unchanged when the stop command fails', async () => {
     const { acc, client } = makeAccessory();
-    client.startClimate.mockRejectedValue(new Error('timeout'));
-    await expect(acc.setCoolActive(true)).rejects.toThrow('HapStatusError');
-    expect(acc.readCoolActive()).toBe(false);
+    acc._lastStatus = { basicVehicleStatus: { remoteClimateStatus: 3 } };
+    client.stopClimate.mockRejectedValue(new Error('timeout'));
+    await expect(acc.setCoolActive(false)).rejects.toThrow('HapStatusError');
+    expect(acc.readCoolActive()).toBe(true);
   });
 });
 
@@ -514,5 +509,66 @@ describe('logExposedServices', () => {
       enableRearDefrost: false,
     });
     expect(lines(log)).toMatch(/HomeKit services exposed: Battery, Lock, Charging outlet\./);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// refresh - skipping the charging poll when the charger is known unplugged
+// ---------------------------------------------------------------------------
+
+describe('refresh', () => {
+  it('polls charging status as normal when the plug state is not yet known', async () => {
+    const { acc, client } = makeAccessory();
+    client.vehicleStatus.mockResolvedValue({ basicVehicleStatus: {} });
+    client.chargingStatus.mockResolvedValue({ chrgMgmtData: { ccuOnbdChrgrPlugOn: 1 } });
+    await acc.refresh();
+    expect(client.chargingStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the charging poll once the charger was last seen unplugged', async () => {
+    const { acc, client } = makeAccessory();
+    acc._lastCharging = { chrgMgmtData: { ccuOnbdChrgrPlugOn: 0 } };
+    client.vehicleStatus.mockResolvedValue({ basicVehicleStatus: {} });
+    await acc.refresh();
+    expect(client.chargingStatus).not.toHaveBeenCalled();
+  });
+
+  it('re-checks after CHARGING_RECHECK_CYCLES skipped cycles in case a cable was plugged back in', async () => {
+    const { acc, client } = makeAccessory();
+    acc._lastCharging = { chrgMgmtData: { ccuOnbdChrgrPlugOn: 0 } };
+    client.vehicleStatus.mockResolvedValue({ basicVehicleStatus: {} });
+
+    for (let i = 0; i < MgSaicAccessory.CHARGING_RECHECK_CYCLES; i++) {
+      await acc.refresh();
+    }
+    expect(client.chargingStatus).not.toHaveBeenCalled();
+
+    await acc.refresh();
+    expect(client.chargingStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets the skip streak once a fresh charging reading comes back', async () => {
+    const { acc, client } = makeAccessory();
+    acc._lastCharging = { chrgMgmtData: { ccuOnbdChrgrPlugOn: 0 } };
+    client.vehicleStatus.mockResolvedValue({ basicVehicleStatus: {} });
+
+    for (let i = 0; i < MgSaicAccessory.CHARGING_RECHECK_CYCLES; i++) {
+      await acc.refresh();
+    }
+    client.chargingStatus.mockResolvedValue({ chrgMgmtData: { ccuOnbdChrgrPlugOn: 1 } });
+    await acc.refresh();
+
+    client.chargingStatus.mockClear();
+    await acc.refresh();
+    expect(client.chargingStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('still polls vehicle status while the charging poll is being skipped', async () => {
+    const { acc, client } = makeAccessory();
+    acc._lastCharging = { chrgMgmtData: { ccuOnbdChrgrPlugOn: 0 } };
+    client.vehicleStatus.mockResolvedValue({ basicVehicleStatus: { lockStatus: 1 } });
+    await acc.refresh();
+    expect(client.vehicleStatus).toHaveBeenCalledTimes(1);
+    expect(acc._lastStatus).toEqual({ basicVehicleStatus: { lockStatus: 1 } });
   });
 });
