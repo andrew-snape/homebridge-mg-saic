@@ -96,6 +96,8 @@ Optional `vin` field pins the plugin to a specific vehicle if the account ever r
 
 Defaults to 15 minutes. SAIC's gateway has been observed pausing an account for around 15 minutes after it sees a login from another device, so polling too aggressively risks kicking your phone app's own session repeatedly. See `docs/API.md` for more on rate limiting.
 
+Locking the car while the charger isn't already known to be plugged in fires a short burst of extra charging-status checks over the following 25 minutes, so a plug-in right after arriving home is picked up quickly rather than waiting out the full poll interval. See `CHANGELOG.md` (0.9.10) for details.
+
 ## Testing
 
 See [`TESTING.md`](TESTING.md) for a staged approach: verify the API client stand-alone, then run a throwaway test Homebridge instance before touching your real one, then a dedicated section on testing lock/unlock safely.

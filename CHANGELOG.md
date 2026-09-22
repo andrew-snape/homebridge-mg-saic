@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here. This project doesn't yet follow strict semantic versioning guarantees while it's pre-1.0, breaking config changes are called out explicitly below when they happen.
 
+## 0.9.10
+
+- **Added a lock-triggered rapid refresh sequence to catch a plug-in faster after arriving home.** When the car's lockStatus transitions from unlocked to locked and the charger isn't already known to be plugged in, the plugin now fires a short burst of extra polls — 1, 3, 7, 15 and 25 minutes after the lock, cumulative — instead of waiting for the next scheduled poll (which can be a long way off on a relaxed `pollIntervalMs`) or for the charging-skip streak (see 0.9.8) to run out. Each step forces a real charging check regardless of the skip streak, and the sequence stops as soon as a plug-in is seen. Ported from `mg-saic-ha`'s post-shutdown refresh sequence (lock-engaged trigger); its message-queue-driven event refresh (engine start/stop detection) was not ported — a bigger undertaking with less clear payoff for this plugin's simpler polling model.
+
 ## 0.9.9
 
 - **Added a Front window defrost switch** (`enableFrontDefrost`, off by default, **not yet confirmed against real hardware**). Sends the same `rvcReqType "6"` climate command as pre-conditioning, but with fan speed 5 and a fixed 22 °C instead of the usual fan 2 / chosen temperature — ported from `mg-saic-client`'s own `start_front_defrost` (fan_speed=5, ac_on=True, temperature_idx=8), the same reference library pulled for the Cabin Cool investigation in 0.9.8. Unlike rear defrost the car has no dedicated status field for this, so the switch's On/Off state tracks only what HomeKit last commanded, not a value read back from the car (it resets to Off on a Homebridge restart, which is fine given the car auto-cancels defrost on its own after roughly 10 minutes). Turning it on mirrors `Active=INACTIVE` onto both Cabin Heat and Cabin Cool, since all three share the one climate system; turning Heat on does the same back onto Front Defrost. Turning it off sends the general stop-climate command. See `TESTING.md`/`docs/API.md` for the source trail.
