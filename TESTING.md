@@ -214,6 +214,22 @@ As with the other control commands, lock the car and turn the ignition off first
 
 Window open/close was tested against a real MG4 (software version SWi165 - R11, Australia) and confirmed **not to work**, across several attempts: locked, unlocked with the driver's door held open, and freshly started. Every attempt got `code 8` back from the car, `"Request failed. Please check the vehicle status and try again."`, while lock, seat heat, and rear defrost all succeeded fine in the same sessions. There's no switch or config option for this, it's not exposed. The low-level request is still in `src/saic-client.js` (`controlWindow`/`WINDOW_ID`) in case a firmware update or a different vehicle behaves differently; if you try it and it works for you, an issue or PR is very welcome.
 
+### Lock-triggered rapid refresh — confirming it's running
+
+New in 0.9.10, and low-risk to check because it doesn't send any command to the car, it only changes how often the plugin polls the charging endpoint. With debug logging on, lock the car (fob, iSmart app, or HomeKit) while the charger isn't already known to be plugged in, and watch the logs:
+
+```
+Car locked while unplugged - starting rapid refresh sequence to catch plug-in.
+```
+
+That's followed by extra `/vehicle/charging/mgmtData` polls at roughly 1, 3, 7, 15 and 25 minutes after the lock (cumulative), regardless of the charging-skip streak from 0.9.8. Plug the charger in during that window and the next step should pick it up and log:
+
+```
+Plug-in detected - ending rapid refresh sequence.
+```
+
+If the charger was already known to be plugged in when the car locked, nothing starts, that's expected, the whole point is catching a *new* plug-in.
+
 ## 6. When everything times out at once
 
 Worth recognising, because it looks alarming and isn't a plugin bug. If **every** request starts timing out — including plain `/vehicle/status` and `/vehicle/charging/mgmtData` polls, not just control commands — with `code: 4` on every retry, check where in the sequence it's failing:

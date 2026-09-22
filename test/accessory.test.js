@@ -623,3 +623,111 @@ describe('refresh', () => {
     expect(acc._lastStatus).toEqual({ basicVehicleStatus: { lockStatus: 1 } });
   });
 });
+
+// ---------------------------------------------------------------------------
+// lock-triggered rapid refresh sequence
+// ---------------------------------------------------------------------------
+
+describe('lock-triggered rapid refresh sequence', () => {
+  it('starts the sequence when the car locks while unplugged, and forces a real charging check', async () => {
+    vi.useFakeTimers();
+    try {
+      const { acc, client } = makeAccessory();
+      client.vehicleStatus
+        .mockResolvedValueOnce({ basicVehicleStatus: { lockStatus: 0 } })
+        .mockResolvedValue({ basicVehicleStatus: { lockStatus: 1 } });
+      client.chargingStatus.mockResolvedValue({ chrgMgmtData: { ccuOnbdChrgrPlugOn: 0 } });
+
+      await acc.refresh(); // establishes the previous lock state (unlocked)
+      await acc.refresh(); // lock engages -> starts the sequence
+
+      client.chargingStatus.mockClear();
+      await vi.advanceTimersByTimeAsync(60_000); // first step of the sequence
+
+      expect(client.chargingStatus).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not start a sequence if the charger is already known to be plugged in', async () => {
+    vi.useFakeTimers();
+    try {
+      const { acc, client } = makeAccessory();
+      client.vehicleStatus
+        .mockResolvedValueOnce({ basicVehicleStatus: { lockStatus: 0 } })
+        .mockResolvedValue({ basicVehicleStatus: { lockStatus: 1 } });
+      client.chargingStatus.mockResolvedValue({ chrgMgmtData: { ccuOnbdChrgrPlugOn: 1 } });
+
+      await acc.refresh();
+      await acc.refresh();
+
+      client.vehicleStatus.mockClear();
+      await vi.advanceTimersByTimeAsync(700_000);
+
+      expect(client.vehicleStatus).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not start a sequence on the very first poll (no known previous lock state)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { acc, client } = makeAccessory();
+      client.vehicleStatus.mockResolvedValue({ basicVehicleStatus: { lockStatus: 1 } });
+      client.chargingStatus.mockResolvedValue({ chrgMgmtData: { ccuOnbdChrgrPlugOn: 0 } });
+
+      await acc.refresh();
+
+      client.vehicleStatus.mockClear();
+      await vi.advanceTimersByTimeAsync(700_000);
+
+      expect(client.vehicleStatus).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the sequence as soon as a plug-in is detected', async () => {
+    vi.useFakeTimers();
+    try {
+      const { acc, client } = makeAccessory();
+      client.vehicleStatus
+        .mockResolvedValueOnce({ basicVehicleStatus: { lockStatus: 0 } })
+        .mockResolvedValue({ basicVehicleStatus: { lockStatus: 1 } });
+      client.chargingStatus
+        .mockResolvedValueOnce({ chrgMgmtData: { ccuOnbdChrgrPlugOn: 0 } })
+        .mockResolvedValue({ chrgMgmtData: { ccuOnbdChrgrPlugOn: 1 } });
+
+      await acc.refresh();
+      await acc.refresh(); // starts the sequence
+
+      client.chargingStatus.mockClear();
+      await vi.advanceTimersByTimeAsync(60_000); // step 1: sees the plug-in, stops
+      expect(client.chargingStatus).toHaveBeenCalledTimes(1);
+
+      client.chargingStatus.mockClear();
+      await vi.advanceTimersByTimeAsync(900_000); // well past every remaining step
+      expect(client.chargingStatus).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not start a second sequence while one is already running', () => {
+    vi.useFakeTimers();
+    try {
+      const { acc, log } = makeAccessory();
+      acc.startLockRefreshSequence();
+      const firstTimer = acc._lockRefreshTimer;
+
+      acc.startLockRefreshSequence();
+
+      expect(acc._lockRefreshTimer).toBe(firstTimer);
+      expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('already running'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

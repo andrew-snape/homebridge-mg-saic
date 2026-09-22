@@ -80,6 +80,10 @@ const DOOR_FIELDS = [
 
 export class MgSaicAccessory {
   static CHARGING_RECHECK_CYCLES = 4;
+  // Delays (ms) between each extra poll once the lock-triggered rapid refresh sequence
+  // starts, mirroring mg-saic-ha's post-shutdown refresh sequence: 1, 3, 7, 15, 25
+  // minutes cumulative. Exits early as soon as a plug-in is seen.
+  static LOCK_REFRESH_SEQUENCE_MS = [60_000, 120_000, 240_000, 480_000, 600_000];
 
   /**
    * @param {import('homebridge').PlatformAccessory} accessory
@@ -131,6 +135,11 @@ export class MgSaicAccessory {
     // saves that 60s, but it's rechecked every CHARGING_RECHECK_CYCLES cycles in case a cable
     // gets plugged in while we're not looking.
     this._chargingSkipStreak = 0;
+    // Last observed lockStatus, used to detect the unlocked -> locked transition that
+    // kicks off the rapid refresh sequence below. Undefined until the first successful
+    // poll, so we never fire on startup before we actually know the previous state.
+    this._prevLockStatus = undefined;
+    this._lockRefreshTimer = undefined;
     // Stable cache for the last known-good temperature values; named explicitly
     // to avoid hidden-class churn from dynamic property assignment.
     this._lastInteriorTemperature = null;
@@ -667,6 +676,7 @@ export class MgSaicAccessory {
 
     if (statusResult.status === 'fulfilled') {
       this._lastStatus = statusResult.value;
+      this.detectLockEngaged();
       this.pushStatusCharacteristics();
     } else {
       this.log.warn(`Status refresh failed: ${statusResult.reason.message}`);
@@ -683,6 +693,58 @@ export class MgSaicAccessory {
       this._chargingSkipStreak = 0;
       this.log.warn(`Charging refresh failed: ${chargingResult.reason.message}`);
     }
+  }
+
+  /**
+   * Watches for the lockStatus transition unlocked -> locked - the "just arrived
+   * home, about to plug in" moment. If the charger isn't already known to be
+   * plugged in, kicks off startLockRefreshSequence() so a plug-in right after
+   * locking is caught within a few minutes rather than waiting out the charging
+   * skip streak (up to CHARGING_RECHECK_CYCLES polls) or the full poll interval.
+   * Ported from mg-saic-ha's lock-engaged post-shutdown refresh trigger.
+   */
+  detectLockEngaged() {
+    const lockStatus = this._lastStatus?.basicVehicleStatus?.lockStatus;
+    if (this._prevLockStatus === 0 && lockStatus === 1 && !this.readPluggedIn()) {
+      this.startLockRefreshSequence();
+    }
+    if (lockStatus !== undefined) this._prevLockStatus = lockStatus;
+  }
+
+  /** Starts the rapid refresh sequence, unless one is already running. */
+  startLockRefreshSequence() {
+    if (this._lockRefreshTimer) {
+      this.log.debug('Lock-triggered refresh sequence already running - not starting a second one.');
+      return;
+    }
+    this.log.debug('Car locked while unplugged - starting rapid refresh sequence to catch plug-in.');
+    this.scheduleLockRefreshStep(0);
+  }
+
+  scheduleLockRefreshStep(step) {
+    if (step >= MgSaicAccessory.LOCK_REFRESH_SEQUENCE_MS.length) {
+      this._lockRefreshTimer = undefined;
+      return;
+    }
+    this._lockRefreshTimer = setTimeout(() => {
+      void this.runLockRefreshStep(step);
+    }, MgSaicAccessory.LOCK_REFRESH_SEQUENCE_MS[step]);
+  }
+
+  /** Runs one extra poll, forcing a real charging check regardless of the skip streak. */
+  async runLockRefreshStep(step) {
+    this._chargingSkipStreak = MgSaicAccessory.CHARGING_RECHECK_CYCLES;
+    try {
+      await this.refresh();
+    } catch (err) {
+      this.log.debug(`Lock-triggered refresh failed: ${err.message}`);
+    }
+    if (this.readPluggedIn()) {
+      this.log.debug('Plug-in detected - ending rapid refresh sequence.');
+      this._lockRefreshTimer = undefined;
+      return;
+    }
+    this.scheduleLockRefreshStep(step + 1);
   }
 
   pushStatusCharacteristics() {
