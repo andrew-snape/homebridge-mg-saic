@@ -2,14 +2,19 @@ name: Auto Release
 
 # Creates and publishes a GitHub Release automatically whenever package.json's
 # version changes on main, so a version bump + merge is the only manual step
-# needed - no more tagging and clicking "Publish release" by hand. Publishing
-# the release fires publish.yml (on: release: published), which pushes the
-# new version to npm.
+# needed - no more tagging and clicking "Publish release" by hand. It then
+# calls publish.yml directly to push the new version to npm. (It can't rely on
+# "release: published" for that, because GitHub doesn't let a release made
+# with GITHUB_TOKEN trigger other workflows.) publish.yml skips any version
+# already on npm, so re-runs are harmless and a missed version catches up.
 on:
   push:
     branches: [main]
     paths:
       - package.json
+      - .github/workflows/auto-release.yml
+      - .github/workflows/publish.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -43,3 +48,11 @@ jobs:
           gh release create "v${{ steps.version.outputs.version }}" \
             --title "v${{ steps.version.outputs.version }}" \
             --generate-notes
+
+  publish:
+    needs: release
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish.yml
+    secrets: inherit

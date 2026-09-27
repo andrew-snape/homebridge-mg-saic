@@ -1,12 +1,18 @@
 name: Publish to npm
 
-# Fires whenever a GitHub Release is published. Since auto-release.yml creates
-# and publishes a release automatically for every package.json version bump on
-# main, this normally fires on its own - no manual tagging needed. Publishing
-# a release by hand still works the same way, if ever needed.
+# Publishes the version in package.json to npm, skipping cleanly if that
+# version is already there. It runs three ways:
+# - called directly by auto-release.yml after it creates a release. This is
+#   the normal path. A release created by the workflow's own GITHUB_TOKEN
+#   does NOT fire "release: published" (GitHub blocks that to stop workflow
+#   loops), which is why v0.9.9 and v0.9.10 never reached npm.
+# - when a release is published by hand.
+# - by hand from the Actions tab (workflow_dispatch).
 on:
   release:
     types: [published]
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -22,16 +28,34 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - run: npm ci || npm install
+      - name: Skip if this version is already on npm
+        id: check
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already on npm, nothing to do."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - run: npm run check
+      - if: steps.check.outputs.exists == 'false'
+        run: npm ci || npm install
 
-      - run: npm run lint
+      - if: steps.check.outputs.exists == 'false'
+        run: npm run check
 
-      - run: npm test
+      - if: steps.check.outputs.exists == 'false'
+        run: npm run lint
 
-      - run: npm run build
+      - if: steps.check.outputs.exists == 'false'
+        run: npm test
 
-      - run: npm publish --provenance --access public
+      - if: steps.check.outputs.exists == 'false'
+        run: npm run build
+
+      - if: steps.check.outputs.exists == 'false'
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
