@@ -2,13 +2,16 @@ name: Build Android APK
 
 # Builds the MG Dash debug APK (android/) so it can be downloaded from the run's
 # Artifacts and copied to a USB stick. Debug builds are signed with the debug key,
-# which is fine for sideloading.
+# which is fine for sideloading. The runner image already includes the Android SDK.
 on:
   push:
     paths:
       - android/**
       - .github/workflows/android-build.yml
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -20,8 +23,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-
-      - uses: android-actions/setup-android@v3
 
       - uses: gradle/actions/setup-gradle@v4
         with:
