@@ -82,7 +82,7 @@ class MainActivity : Activity() {
         b.textSize = 20f
         b.setTextColor(Color.WHITE)
         b.setBackgroundColor(accent)
-        b.minHeight = dp(72)
+        b.minHeight = dp(64)
         b.setOnClickListener { onClick() }
         val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         lp.setMargins(dp(6), dp(6), dp(6), dp(6))
@@ -153,30 +153,37 @@ class MainActivity : Activity() {
         content.removeAllViews()
         vin = prefs.getString("vin", null)
 
-        content.addView(text("MG4", 28f, Color.LTGRAY))
-        soc = text("--%", 72f)
+        // The head unit is a wide 1280 x 480 landscape screen, so stats sit on the left and the
+        // control buttons on the right, with no scrolling.
+        soc = text("--%", 64f)
         range = text("Range: --", 24f)
         charge = text("", 22f)
         lockState = text("", 22f)
         temps = text("", 22f)
         climate = text("", 22f)
         statusLine = text("", 18f, Color.parseColor("#ffb74d"))
-        listOf(soc, range, charge, lockState, temps, climate, statusLine).forEach { content.addView(it) }
 
-        content.addView(row(
+        val left = LinearLayout(this)
+        left.orientation = LinearLayout.VERTICAL
+        left.addView(text("MG4", 24f, Color.LTGRAY))
+        listOf(soc, range, charge, lockState, temps, climate, statusLine).forEach { left.addView(it) }
+
+        val right = LinearLayout(this)
+        right.orientation = LinearLayout.VERTICAL
+        right.addView(row(
             button("Lock") { runControl("Locking") { c, v -> c.lock(v) } },
             button("Unlock") { runControl("Unlocking") { c, v -> c.unlock(v) } },
         ))
-        content.addView(row(
+        right.addView(row(
             button("Climate on (22C)") { runControl("Starting climate") { c, v -> c.startClimate(v, 22) } },
             button("Climate off") { runControl("Stopping climate") { c, v -> c.stopClimate(v) } },
         ))
-        content.addView(row(
+        right.addView(row(
             button("Front defrost") { runControl("Starting front defrost") { c, v -> c.startFrontDefrost(v) } },
             button("Rear defrost on") { runControl("Rear defrost on") { c, v -> c.rearDefrost(v, true) } },
             button("Rear defrost off") { runControl("Rear defrost off") { c, v -> c.rearDefrost(v, false) } },
         ))
-        content.addView(row(
+        right.addView(row(
             button("Refresh") { refresh() },
             button("Sign out") {
                 prefs.edit().clear().apply()
@@ -184,6 +191,12 @@ class MainActivity : Activity() {
                 showLogin()
             },
         ))
+
+        val both = LinearLayout(this)
+        both.orientation = LinearLayout.HORIZONTAL
+        both.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        both.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f))
+        content.addView(both)
         refresh()
     }
 
